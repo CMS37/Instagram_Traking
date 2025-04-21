@@ -45,7 +45,8 @@ const runInstagramTracking = () => {
 	let totalRel = 0;
 	const userRows = inf.getRange(4, 1, inf.getLastRow() - 3, 3).getValues();
 
-	userRows.forEach(([username, userId, lastTs], idx) => {
+	const tsUpdate = [];
+	userRows.forEach(([username, userId, lastTs]) => {
 		if (!username || !userId) return;
 
 		let sinceDate = new Date(lastTs);
@@ -53,7 +54,8 @@ const runInstagramTracking = () => {
 		let latestTimestamp = sinceDate;
 
 		totalNew = posts.length;
-	
+		
+		const rowUpdate = [];	
 		posts.forEach(p => {
 			log(`🔍 [runInstagramTracking] ${p.shortcode} ${p.timestamp} \n ${p.caption}`);
 
@@ -64,7 +66,7 @@ const runInstagramTracking = () => {
 			if (matched) totalRel++;
 
 			const postUrl = p.shortcode ? `https://www.instagram.com/p/${p.shortcode}` : '';
-			res.appendRow([
+			rowUpdate.push([
 				'Instagram',
 				username,
 				postUrl,
@@ -73,11 +75,19 @@ const runInstagramTracking = () => {
 				matched? 'O' : 'X',
 			]);
 		});
+		if (rowsToWrite.length) {
+			const startRow = res.getLastRow() + 1;
+			res.getRange(startRow, 1, rowsToWrite.length, rowsToWrite[0].length)
+				.setValues(rowsToWrite);
+		}
 		if (latestTimestamp > sinceDate) {
 			const nextTs = new Date(latestTimestamp.getTime() + 1000);
-			inf.getRange(idx + 4, 3).setValue(nextTs);
+			tsUpdate.push([ nextTs ]);
 		}
 	});
+
+	inf.getRange(4, 3, tsUpdate.length, 1).setValues(tsUpdate);
+
 	const main = ss.getSheetByName('메인');
 	main.getRange('B9').setValue(totalNew);
 	main.getRange('B10').setValue(totalRel);
