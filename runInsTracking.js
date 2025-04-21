@@ -3,8 +3,9 @@ const buildInsUserPostsUrl = (userId, oldestSec = 0) => {
 	const token = getRequiredProperty("API_TOKEN");
 	const params = {
 		user_id: userId,
-		depth: 1,
+		depth: 100,
 		oldest_timestamp: oldestSec,
+		chunk_size: 1,
 		token: token
 	};
 	const qs = Object.entries(params)
@@ -18,11 +19,11 @@ const fetchInstagramPosts = (userId, sinceDate) => {
 	const url = buildInsUserPostsUrl(userId, oldestSec);
 	try {
 		const resp = UrlFetchApp.fetch(url);
-		const items = JSON.parse(resp.getContentText())?.data || [];
+		const items = JSON.parse(resp.getContentText())?.data?.posts || [];
 		return items.map(p => ({
-			shortcode: p.shortcode,
-			caption: p.edge_media_to_caption?.edges?.node?.text || '',
-			timestamp: new Date((p.taken_at_timestamp || 0) * 1000)
+			shortcode: p.node.shortcode,
+			caption: p.node.edge_media_to_caption?.edges?.[0]?.node?.text || '',
+			timestamp: new Date((p.node.taken_at_timestamp || 0) * 1000)
 		}));
 	} catch (err) {
 		log(`❌ [fetchInstagramPosts] ${userId} 오류: ${err}`);
@@ -42,35 +43,39 @@ const runInstagramTracking = () => {
 
 	let totalNew = 0;
 	let totalRel = 0;
-	const userRows = inf.getRange(3, 1, inf.getLastRow() - 2, 3).getValues();
+	const userRows = inf.getRange(4, 1, inf.getLastRow() - 3, 3).getValues();
 
 	userRows.forEach(([username, userId, lastTs], idx) => {
 		if (!username || !userId) return;
 
-		const sinceDate = lastTs;
+		let sinceDate = new Date(lastTs);
 		const posts = fetchInstagramPosts(userId, sinceDate);
+		let latestTimestamp = sinceDate;
 
 		totalNew = posts.length;
-		latestTimestamp = posts[0]?.timestamp;
 	
 		posts.forEach(p => {
+			log(`🔍 [runInstagramTracking] ${p.shortcode} ${p.timestamp} \n ${p.caption}`);
+
 			const ts = p.timestamp;
-			if (ts <= sinceDate) return;
+			if (ts > latestTimestamp) latestTimestamp = ts;
 
 			const matched = keywords.some(k => p.caption.toLowerCase().includes(k));
-			if (!matched) return;
+			if (matched) totalRel++;
 
 			const postUrl = p.shortcode ? `https://www.instagram.com/p/${p.shortcode}` : '';
 			res.appendRow([
 				'Instagram',
 				username,
 				postUrl,
-				ts,
+				p.timestamp,
 				p.caption,
+				matched? 'O' : 'X',
 			]);
 		});
 		if (latestTimestamp > sinceDate) {
-			inf.getRange(idx + 3, 3).setValue(latestTimestamp);
+			const nextTs = new Date(latestTimestamp.getTime() + 1000);
+			inf.getRange(idx + 4, 3).setValue(nextTs);
 		}
 	});
 	const main = ss.getSheetByName('메인');
