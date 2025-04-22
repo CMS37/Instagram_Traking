@@ -37,9 +37,8 @@ const updateInstagramIds = () => {
 		return;
 	}
 
-	const now = new Date();
 	const urls = targets.map(({ username }) => buildInsUserInfoUrl(username));
-	const responses = fetchAllInBatches(urls, 100, 500);
+	const responses = fetchAllInBatches(urls, 20, 100);
 
 	responses.forEach((resp, i) => {
 		const { username, row } = targets[i];
@@ -49,7 +48,6 @@ const updateInstagramIds = () => {
 
 			if (userId) {
 				sheet.getRange(row, 2).setValue(userId);
-				sheet.getRange(row, 3).setValue(now);
 				log(`✅ ${username} → ID: ${userId}`);
 			} else {
 				log(`⚠️ ${username} user_id 응답 없음`);
