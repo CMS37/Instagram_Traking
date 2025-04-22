@@ -1,34 +1,18 @@
-const buildInsUserPostsUrl = (userId, oldestSec = 0) => {
+const buildInsUserPostsUrl = (user_id, oldest_timestamp) => {
 	const root = "https://ensembledata.com/apis";
+	const endpoint = "/instagram/user/posts";
 	const token = getRequiredProperty("API_TOKEN");
 	const params = {
-		user_id: userId,
+		user_id,
 		depth: 50,
-		oldest_timestamp: oldestSec,
+		oldest_timestamp,
 		chunk_size: 1,
-		token: token
+		token
 	};
 	const qs = Object.entries(params)
 		.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
 		.join('&');
-	return `${root}/instagram/user/posts?${qs}`;
-};
-
-const fetchInstagramPosts = (userId, sinceDate) => {
-	const oldestSec = Math.floor(sinceDate.getTime() / 1000);
-	const url = buildInsUserPostsUrl(userId, oldestSec);
-	try {
-		const resp = UrlFetchApp.fetch(url);
-		const items = JSON.parse(resp.getContentText())?.data?.posts || [];
-		return items.map(p => ({
-			shortcode: p.node.shortcode,
-			caption: p.node.edge_media_to_caption?.edges?.[0]?.node?.text || '',
-			timestamp: new Date((p.node.taken_at_timestamp || 0) * 1000)
-		}));
-	} catch (err) {
-		log(`❌ [fetchInstagramPosts] ${userId} 오류: ${err}`);
-		return [];
-	}
+	return `${root}${endpoint}?${qs}`;
 };
 
 const runInstagramTracking = () => {
@@ -40,22 +24,19 @@ const runInstagramTracking = () => {
 
 	const lastCell = main.getRange('F9')
 	let sinceDate = lastCell.getValue(); // 사용자가 임의로 날짜 수정한경우 instanceof Date 체크가 안되어서 새로 생성
-	if (!(sinceDate instanceof Date)) {
-		sinceDate = new Date(sinceDate);
-	}
+	if (!(sinceDate instanceof Date)) sinceDate = new Date(sinceDate);
 
 	const rawRows = inf.getRange(4, 1, inf.getLastRow() - 3, 2).getValues();
 	const userRows = rawRows.filter(([username, userId]) => !!username && !!userId);
 
 	const keywords = kwSheet.getRange(2, 1, kwSheet.getLastRow() - 1, 1)
-		.getValues().flat()
-		.filter(Boolean)
-		.map(k => k.toLowerCase());
+		.getValues().flat().filter(Boolean).map(k => k.toLowerCase());
 	
 	const urls = userRows.map(([_, userId]) =>
 		buildInsUserPostsUrl(userId, Math.floor(sinceDate.getTime()/1000))
 	);
 	const resps = fetchAllInBatches(urls, 20, 100);
+
 	const rowsToWrite = [];
 	let totalNew = 0, totalRel = 0;
 
