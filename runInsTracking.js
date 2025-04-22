@@ -1,18 +1,16 @@
 const buildInsUserPostsUrl = (user_id, oldest_timestamp) => {
-	const root = "https://ensembledata.com/apis";
 	const endpoint = "/instagram/user/posts";
-	const token = getRequiredProperty("API_TOKEN");
 	const params = {
 		user_id,
 		depth: 50,
 		oldest_timestamp,
 		chunk_size: 1,
-		token
+		token: Config.TOKEN,
 	};
 	const qs = Object.entries(params)
 		.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
 		.join('&');
-	return `${root}${endpoint}?${qs}`;
+	return `${Config.API_ROOT}${endpoint}?${qs}`;
 };
 
 const runInstagramTracking = () => {
@@ -35,12 +33,14 @@ const runInstagramTracking = () => {
 	const urls = userRows.map(([_, userId]) =>
 		buildInsUserPostsUrl(userId, Math.floor(sinceDate.getTime()/1000))
 	);
-	const resps = fetchAllInBatches(urls, 20, 100);
+	const resps = fetchAllInBatches(urls, Config.BATCH_SIZE, Config.DELAY_MS);
 
 	const rowsToWrite = [];
 	let totalNew = 0, totalRel = 0;
 
 	resps.forEach((resp, i) => {
+		if (resp.getResponseCode() !== 200) return;
+		
 		const [username] = userRows[i];
 		const items = JSON.parse(resp.getContentText())?.data?.posts || [];
 		totalNew += items.length;
@@ -51,7 +51,7 @@ const runInstagramTracking = () => {
 			if (ts <= sinceDate) return;
 		
 			const caption = node.edge_media_to_caption?.edges?.[0]?.node?.text || '';
-			const matched = keywords.includes(k => caption.toLowerCase().includes(k));
+			const matched = keywords.some(k => caption.toLowerCase().includes(k));
 			// if (!matched) return;
 			if (matched) totalRel++;
 		

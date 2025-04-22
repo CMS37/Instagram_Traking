@@ -1,17 +1,15 @@
 const buildTkUserPostsUrl = (username, oldest_createtime) => {
-	const root = "https://ensembledata.com/apis";
 	const endpoint = "/tt/user/posts";
-	const token = getRequiredProperty("API_TOKEN");
 	const params = {
 		username,
-		depth: 10,
+		depth: 100,
 		oldest_createtime,
-		token
+		token: Config.TOKEN,
 	};
 	const qs = Object.entries(params)
 		.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
 		.join('&');
-	return `${root}${endpoint}?${qs}`;
+	return `${Config.API_ROOT}${endpoint}?${qs}`;
 };
 
 const runTikTokTracking = () => {
@@ -39,12 +37,14 @@ const runTikTokTracking = () => {
 	const urls  = users.map(u => 
 		buildTkUserPostsUrl(u, Math.floor(sinceDate.getTime()/1000))
 	);
-	const resps = fetchAllInBatches(urls, 20, 100);
+	const resps = fetchAllInBatches(urls, Config.BATCH_SIZE, Config.DELAY_MS);
   
 	const rowsToWrite = [];
 	let totalNew = 0, totalRel = 0;
   
 	resps.forEach((resp, i) => {
+		if (resp.getResponseCode() !== 200) return;
+		
 		const username = users[i];
 		const items = JSON.parse(resp.getContentText())?.data || [];
 		totalNew += items.length;
@@ -67,15 +67,13 @@ const runTikTokTracking = () => {
 			]);
 		})
 	});
-  
-	// 시트에 일괄 기록
+
 	if (rowsToWrite.length) {
 	  const start = res.getLastRow() + 1;
 	  res.getRange(start,1, rowsToWrite.length, rowsToWrite[0].length)
 		 .setValues(rowsToWrite);
 	}
-  
-	// 통계 및 실행시간 갱신
+
 	main.getRange('B11').setValue(totalNew);
 	main.getRange('B12').setValue(totalRel);
 	lastCell.setValue(new Date());
