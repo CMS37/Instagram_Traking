@@ -2,7 +2,7 @@ const buildTkUserPostsUrl = (username, oldest_createtime) => {
 	const endpoint = "/tt/user/posts";
 	const params = {
 		username,
-		depth: 100,
+		depth: 1,
 		oldest_createtime,
 		token: Config.TOKEN,
 	};
@@ -74,8 +74,8 @@ const runTikTokTracking = () => {
 		 .setValues(rowsToWrite);
 	}
 
-	main.getRange('B11').setValue(totalNew);
-	main.getRange('B12').setValue(totalRel);
+	main.getRange('B12').setValue(totalNew);
+	main.getRange('B13').setValue(totalRel);
 	lastCell.setValue(new Date());
   
 	log(`✅ TikTok 트래킹 완료: 신규 ${totalNew}, 관련 ${totalRel}`);

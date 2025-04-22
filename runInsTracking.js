@@ -2,7 +2,7 @@ const buildInsUserPostsUrl = (user_id, oldest_timestamp) => {
 	const endpoint = "/instagram/user/posts";
 	const params = {
 		user_id,
-		depth: 50,
+		depth: 100,
 		oldest_timestamp,
 		chunk_size: 1,
 		token: Config.TOKEN,
@@ -20,18 +20,18 @@ const runInstagramTracking = () => {
 	const res = ss.getSheetByName('포스팅 결과');
 	const kwSheet = ss.getSheetByName('키워드목록');
 
-	const lastCell = main.getRange('F9')
-	let sinceDate = lastCell.getValue(); // 사용자가 임의로 날짜 수정한경우 instanceof Date 체크가 안되어서 새로 생성
+	const lastCell = main.getRange('F8')
+	let sinceDate = lastCell.getValue();
 	if (!(sinceDate instanceof Date)) sinceDate = new Date(sinceDate);
 
 	const rawRows = inf.getRange(4, 1, inf.getLastRow() - 3, 2).getValues();
-	const userRows = rawRows.filter(([username, userId]) => !!username && !!userId);
+	const userRows = rawRows.filter(([username, user_id]) => !!username && !!user_id);
 
 	const keywords = kwSheet.getRange(2, 1, kwSheet.getLastRow() - 1, 1)
 		.getValues().flat().filter(Boolean).map(k => k.toLowerCase());
 	
-	const urls = userRows.map(([_, userId]) =>
-		buildInsUserPostsUrl(userId, Math.floor(sinceDate.getTime()/1000))
+	const urls = userRows.map(([_, user_id]) =>
+		buildInsUserPostsUrl(user_id, Math.floor(sinceDate.getTime()/1000))
 	);
 	const resps = fetchAllInBatches(urls, Config.BATCH_SIZE, Config.DELAY_MS);
 
@@ -73,4 +73,6 @@ const runInstagramTracking = () => {
 	main.getRange('B9').setValue(totalNew);
 	main.getRange('B10').setValue(totalRel);
 	lastCell.setValue(new Date());
+
+	log(`✅ Instagram 트래킹 완료: 신규 ${totalNew}, 관련 ${totalRel}`);
 }
