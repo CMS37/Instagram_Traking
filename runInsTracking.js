@@ -33,41 +33,35 @@ const fetchInstagramPosts = (userId, sinceDate) => {
 
 const runInstagramTracking = () => {
 	const ss = SpreadsheetApp.getActiveSpreadsheet();
+	const main = ss.getSheetByName('메인');
 	const inf = ss.getSheetByName('인플루언서목록');
 	const res = ss.getSheetByName('포스팅 결과');
 	const kwSheet = ss.getSheetByName('키워드목록');
-	const main = ss.getSheetByName('메인');
-	const lastTs = main.getRange('F9').getValue();
 
+	const lastCell = main.getRange('F9').getValue();
+	let sinceDate = new Date(lastCell); // 사용자가 임의로 날짜 수정한경우 instanceof Date 체크가 안되어서 새로 생성
 
-
+	const userRows = inf.getRange(4, 1, inf.getLastRow() - 3, 2).getValues();
 	const keywords = kwSheet.getRange(2, 1, kwSheet.getLastRow() - 1, 1)
 		.getValues().flat()
 		.filter(Boolean)
 		.map(k => k.toLowerCase());
-
-	const userRows = inf.getRange(4, 1, inf.getLastRow() - 3, 2).getValues();
 	
-	let totalNew = 0;
-	let totalRel = 0;
+	const rowsToWrite = [];
+	let totalNew = 0, totalRel = 0;
 
 	userRows.forEach(([username, userId]) => {
 		if (!username || !userId) return;
-
-		let sinceDate = new Date(lastTs);
 		const posts = fetchInstagramPosts(userId, sinceDate);
-
 		totalNew = posts.length;
-		
-		const rowUpdate = [];	
 		posts.forEach(p => {
-			log(`🔍 [runInstagramTracking] ${p.shortcode} ${p.timestamp} \n ${p.caption}`);
+			log(`🔍 [InstagramTracking] ${p.shortcode} ${p.timestamp} \n ${p.caption}`);
 
 			const matched = keywords.some(k => p.caption.toLowerCase().includes(k));
 			if (matched) totalRel++;
 
 			const postUrl = p.shortcode ? `https://www.instagram.com/p/${p.shortcode}` : '';
-			rowUpdate.push([
+			rowsToWrite.push([
 				'Instagram',
 				username,
 				postUrl,
