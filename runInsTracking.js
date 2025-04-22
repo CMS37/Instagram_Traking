@@ -36,31 +36,32 @@ const runInstagramTracking = () => {
 	const inf = ss.getSheetByName('인플루언서목록');
 	const res = ss.getSheetByName('포스팅 결과');
 	const kwSheet = ss.getSheetByName('키워드목록');
+	const main = ss.getSheetByName('메인');
+	const lastTs = main.getRange('F9').getValue();
+
+
+
 	const keywords = kwSheet.getRange(2, 1, kwSheet.getLastRow() - 1, 1)
 		.getValues().flat()
 		.filter(Boolean)
 		.map(k => k.toLowerCase());
 
+	const userRows = inf.getRange(4, 1, inf.getLastRow() - 3, 2).getValues();
+	
 	let totalNew = 0;
 	let totalRel = 0;
-	const userRows = inf.getRange(4, 1, inf.getLastRow() - 3, 3).getValues();
 
-	const tsUpdate = [];
-	userRows.forEach(([username, userId, lastTs]) => {
+	userRows.forEach(([username, userId]) => {
 		if (!username || !userId) return;
 
 		let sinceDate = new Date(lastTs);
 		const posts = fetchInstagramPosts(userId, sinceDate);
-		let latestTimestamp = sinceDate;
 
 		totalNew = posts.length;
 		
 		const rowUpdate = [];	
 		posts.forEach(p => {
 			log(`🔍 [runInstagramTracking] ${p.shortcode} ${p.timestamp} \n ${p.caption}`);
-
-			const ts = p.timestamp;
-			if (ts > latestTimestamp) latestTimestamp = ts;
 
 			const matched = keywords.some(k => p.caption.toLowerCase().includes(k));
 			if (matched) totalRel++;
@@ -80,15 +81,9 @@ const runInstagramTracking = () => {
 			res.getRange(startRow, 1, rowsToWrite.length, rowsToWrite[0].length)
 				.setValues(rowsToWrite);
 		}
-		if (latestTimestamp > sinceDate) {
-			const nextTs = new Date(latestTimestamp.getTime() + 1000);
-			tsUpdate.push([ nextTs ]);
-		}
 	});
+	lastTs.setValue(new Date());
 
-	inf.getRange(4, 3, tsUpdate.length, 1).setValues(tsUpdate);
-
-	const main = ss.getSheetByName('메인');
 	main.getRange('B9').setValue(totalNew);
 	main.getRange('B10').setValue(totalRel);
 
