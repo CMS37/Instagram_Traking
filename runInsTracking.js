@@ -52,8 +52,8 @@ const runInstagramTracking = () => {
 		
 			const caption = node.edge_media_to_caption?.edges?.[0]?.node?.text || '';
 			const matched = keywords.some(k => caption.toLowerCase().includes(k));
-			// if (!matched) return;
-			if (matched) totalRel++;
+			if (!matched) return;
+			totalRel++;
 		
 			rowsToWrite.push([
 				'Instagram',

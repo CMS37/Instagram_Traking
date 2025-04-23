@@ -55,7 +55,8 @@ const runTikTokTracking = () => {
 
 			const desc = w.desc || '';
 			const matched = keywords.some(k => desc.toLowerCase().includes(k));
-			if (matched) totalRel++;
+			if (!matched) return;
+			totalRel++;
 
 			rowsToWrite.push([
 				'TikTok',
