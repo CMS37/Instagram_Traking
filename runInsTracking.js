@@ -14,24 +14,33 @@ const buildInsUserPostsUrl = (user_id, oldest_timestamp) => {
 };
 
 const runInstagramTracking = () => {
+	const ui = SpreadsheetApp.getUi();
 	const ss = SpreadsheetApp.getActiveSpreadsheet();
 	const main = ss.getSheetByName('메인');
 	const inf = ss.getSheetByName('인플루언서목록');
 	const res = ss.getSheetByName('포스팅 결과');
 	const kwSheet = ss.getSheetByName('키워드목록');
 
-	const lastCell = main.getRange('F8')
-	let sinceDate = lastCell.getValue();
-	if (!(sinceDate instanceof Date)) sinceDate = new Date(sinceDate);
+	const startCell = main.getRange('C3').getValue();
+	const endCell = main.getRange('C4').getValue();
+	const startDate = new Date(startCell);
+	const endDate = new Date(endCell);
+	if (!(startDate instanceof Date) || isNaN(startDate) || !(endDate instanceof Date) || isNaN(endDate)) {
+		throw new Error('메인 시트 C3/C4에 올바른 날짜 형식(YYYY-MM-DD)을 입력하세요.');
+	}
+
+	main.getRange('C7').setValue(0);
+	main.getRange('C8').setValue(0);
+
+	const keywords = kwSheet.getRange(2, 1, kwSheet.getLastRow() - 1, 1)
+		.getValues().flat().filter(Boolean).map(k => k.toLowerCase());
 
 	const rawRows = inf.getRange(4, 1, inf.getLastRow() - 3, 2).getValues();
 	const userRows = rawRows.filter(([username, user_id]) => !!username && !!user_id);
 
-	const keywords = kwSheet.getRange(2, 1, kwSheet.getLastRow() - 1, 1)
-		.getValues().flat().filter(Boolean).map(k => k.toLowerCase());
 	
 	const urls = userRows.map(([_, user_id]) =>
-		buildInsUserPostsUrl(user_id, Math.floor(sinceDate.getTime()/1000))
+		buildInsUserPostsUrl(user_id, Math.floor(startDate.getTime()/1000))
 	);
 	const resps = fetchAllInBatches(urls, Config.BATCH_SIZE, Config.DELAY_MS);
 
@@ -43,25 +52,24 @@ const runInstagramTracking = () => {
 		
 		const [username] = userRows[i];
 		const items = JSON.parse(resp.getContentText())?.data?.posts || [];
-		totalNew += items.length;
 	
 		items.forEach(w => {
 			const node = w.node || {};
 			const ts   = new Date((node.taken_at_timestamp||0)*1000);
-			if (ts <= sinceDate) return;
-		
+			
+			if (ts <= startDate || ts > endDate) return;
+			totalNew++;
+
 			const caption = node.edge_media_to_caption?.edges?.[0]?.node?.text || '';
-			const matched = keywords.some(k => caption.toLowerCase().includes(k));
-			if (!matched) return;
+			if (!keywords.some(k => caption.toLowerCase().includes(k))) return;
 			totalRel++;
 		
 			rowsToWrite.push([
 				'Instagram',
 				username,
-				`https://www.instagram.com/p/${node.shortcode}`,
 				ts,
+				`https://www.instagram.com/p/${node.shortcode}`,
 				caption,
-				matched? 'o' : 'x',
 			]);
 		});
 	});
@@ -70,9 +78,16 @@ const runInstagramTracking = () => {
 		res.getRange(startRow, 1, rowsToWrite.length, rowsToWrite[0].length)
 			.setValues(rowsToWrite);
 	}
-	main.getRange('B9').setValue(totalNew);
-	main.getRange('B10').setValue(totalRel);
-	lastCell.setValue(new Date());
-
+	main.getRange('C7').setValue(totalNew);
+	main.getRange('C8').setValue(totalRel);
+	
+	const failures = getLastFetchFailureLogs();
+	const failCount = failures.length;
+	const failLines = failures.length
+		? '\n\n실패 상세:\n' + failures.join('\n')
+		: '';
+	ui.alert(
+		`Instagram 트래킹 결과\n\n신규 포스트: ${totalNew}\n관련 포스트: ${totalRel}\n실패 요청: ${failCount}${failLines}`
+	);
 	log(`✅ Instagram 트래킹 완료: 신규 ${totalNew}, 관련 ${totalRel}`);
 }

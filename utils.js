@@ -1,3 +1,5 @@
+let lastFetchFailures = [];
+
 const log = (message) => {
 	Logger.log(message);
 }
@@ -18,7 +20,9 @@ const fetchAllInBatches = (urls, batchSize = 20, delay = 100) => {
 		respsBatch.forEach((resp, idx) => {
 			const code = resp.getResponseCode();
 			if (code !== 200) {
-			log(`⚠️ fetchAllInBatches 요청 실패: ${requests[idx].url} → HTTP ${code}`);
+				const msg = `${batch[idx].url} → HTTP ${code}`;
+				lastFetchFailures.push(msg);
+				log(`⚠️ fetchAllInBatches 오류: ${msg}`);
 			}
 		});
     	responses = responses.concat(respsBatch);
@@ -28,3 +32,5 @@ const fetchAllInBatches = (urls, batchSize = 20, delay = 100) => {
 	}
 	return responses;
 };
+
+const getLastFetchFailureLogs = () => lastFetchFailures.slice();
