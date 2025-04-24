@@ -17,7 +17,7 @@ const runTikTokTracking = () => {
 	const ss    = SpreadsheetApp.getActiveSpreadsheet();
 	const main  = ss.getSheetByName('메인');
 	const inf   = ss.getSheetByName('인플루언서목록');
-	const res     = ss.getSheetByName('포스팅 결과');
+	const res     = ss.getSheetByName('틱톡 결과');
 	const kwSheet = ss.getSheetByName('키워드목록');
 
 	const startCell = main.getRange('C3').getValue();
@@ -59,6 +59,12 @@ const runTikTokTracking = () => {
 			const desc = w.desc || '';
 			if (!keywords.some(k => desc.toLowerCase().includes(k))) return;
 			totalRel++;
+
+
+			play = w.statistics?.play_count || 0;
+			digg = w.statistics?.digg_count || 0;
+			collect = w.statistics?.collect_count || 0;
+			comment = w.statistics?.comment_count || 0;
 
 			rowsToWrite.push([
 				'TikTok',

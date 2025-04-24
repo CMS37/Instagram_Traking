@@ -3,4 +3,4 @@ const Config = {
 	TOKEN:   getRequiredProperty("API_TOKEN"),
 	BATCH_SIZE: 15,
 	DELAY_MS:   50,
-  };
+};
