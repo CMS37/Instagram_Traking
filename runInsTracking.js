@@ -21,16 +21,11 @@ const runInstagramTracking = () => {
 	const res = ss.getSheetByName('포스팅 결과');
 	const kwSheet = ss.getSheetByName('키워드목록');
 
-	const startCell = main.getRange('C3').getValue();
-	const endCell = main.getRange('C4').getValue();
-	const startDate = new Date(startCell);
-	const endDate = new Date(endCell);
+	const startDate = new Date(main.getRange('C3').getValue());
+	const endDate = new Date(main.getRange('C4').getValue());
 	if (!(startDate instanceof Date) || isNaN(startDate) || !(endDate instanceof Date) || isNaN(endDate)) {
 		throw new Error('메인 시트 C3/C4에 올바른 날짜 형식(YYYY-MM-DD)을 입력하세요.');
 	}
-
-	main.getRange('C7').setValue(0);
-	main.getRange('C8').setValue(0);
 
 	const keywords = kwSheet.getRange(2, 1, kwSheet.getLastRow() - 1, 1)
 		.getValues().flat().filter(Boolean).map(k => k.toLowerCase());
