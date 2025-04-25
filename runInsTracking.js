@@ -1,6 +1,4 @@
-const PAGE_SIZE = 12;
-
-const buildInsUserPostsRequest = (userId, count = PAGE_SIZE, endCursor = '') => {
+const buildInsUserPostsRequest = (userId, count = 12, endCursor = '') => {
 	const apiKey = getRequiredProperty('RAPIDAPI_KEY');
 	const url = `https://${Config.RAPIDAPI_INS_HOST}/user-feeds2`;
 	let qs = `?id=${encodeURIComponent(userId)}&count=${count}`;
@@ -20,7 +18,7 @@ const buildInsUserPostsRequest = (userId, count = PAGE_SIZE, endCursor = '') => 
 };
 
 const fetchPage = (userId, endCursor = '') => {
-	const { url, options } = buildInsUserPostsRequest(userId, PAGE_SIZE, endCursor);
+	const { url, options } = buildInsUserPostsRequest(userId, 12, endCursor);
 	const resp = UrlFetchApp.fetch(url, options);
 	if (resp.getResponseCode() !== 200) throw new Error(`HTTP ${resp.getResponseCode()}`);
 	const json = JSON.parse(resp.getContentText());
@@ -37,14 +35,14 @@ const filterPosts = (edges, username, startDate, endDate, keywords) => {
 	let stopPaging = false;
 
 	for (const { node } of edges) {
-		newCount++;
 		const ts = new Date((node.taken_at_timestamp ?? 0) * 1000);
-
+		
 		const isPinned = Array.isArray(node.pinned_for_users) && node.pinned_for_users.length > 0;
 		if (!isPinned && ts <= startDate) {
 			stopPaging = true;
 			break;
 		}
+		newCount++;
 		if (ts > endDate) continue;
 
 		const caption = node.edge_media_to_caption?.edges?.[0]?.node?.text?.toLowerCase() ?? '';
@@ -76,96 +74,87 @@ const filterPosts = (edges, username, startDate, endDate, keywords) => {
 };
 
 const runInstagramTracking = () => {
-	const lock = LockService.getScriptLock();
-	lock.waitLock(30000);
+	const ui = SpreadsheetApp.getUi();
+	const ss = SpreadsheetApp.getActiveSpreadsheet();
+	const sheets = {
+		main:      ss.getSheetByName('메인'),
+		influList: ss.getSheetByName('인플루언서목록'),
+		result:    ss.getSheetByName('인스타 결과'),
+		keywords:  ss.getSheetByName('키워드목록')
+	};
 
-	try {
-		const ui = SpreadsheetApp.getUi();
-		const ss = SpreadsheetApp.getActiveSpreadsheet();
-		const sheets = {
-			main:      ss.getSheetByName('메인'),
-			influList: ss.getSheetByName('인플루언서목록'),
-			result:    ss.getSheetByName('인스타 결과'),
-			keywords:  ss.getSheetByName('키워드목록')
-		};
+	const parseDate = cell => {
+		const d = new Date(sheets.main.getRange(cell).getValue());
+		if (isNaN(d)) {
+			throw new Error(`메인 시트 ${cell}에 올바른 날짜(YYYY-MM-DD)를 입력하세요.`);
+		}
+		return d;
+	};
+	
+	const startDate = parseDate('C3');
+	const endDate   = parseDate('C4');
 
-		const parseDate = cell => {
-			const d = new Date(sheets.main.getRange(cell).getValue());
-			if (isNaN(d)) {
-				throw new Error(`메인 시트 ${cell}에 올바른 날짜(YYYY-MM-DD)를 입력하세요.`);
+	const keywords = sheets.keywords
+		.getRange(2, 1, sheets.keywords.getLastRow() - 1, 1)
+		.getValues()
+		.flat()
+		.filter(Boolean)
+		.map(k => `${k}`.toLowerCase());
+
+	const userRows = sheets.influList
+		.getRange(4, 1, sheets.influList.getLastRow() - 3, 2)
+		.getValues()
+		.filter(([u, id]) => u && id);
+
+	let totalNew = 0, totalRel = 0;
+	const rowsToWrite = [];
+	const failures = [];
+
+	for (const [username, userId] of userRows) {
+		let endCursor = '';
+		let hasNextPage = true;
+
+		while (hasNextPage) {
+			let media;
+			
+			try {
+				media = fetchPage(userId, endCursor);
+			} catch (err) {
+				failures.push(`${username} : ${err.message}`);
+				break;
 			}
-			return d;
-		};
-		
-		const startDate = parseDate('C3');
-		const endDate   = parseDate('C4');
+			
+			if (!media) break;
 
-		const keywords = sheets.keywords
-			.getRange(2, 1, sheets.keywords.getLastRow() - 1, 1)
-			.getValues()
-			.flat()
-			.filter(Boolean)
-			.map(k => `${k}`.toLowerCase());
+			const { edges = [], page_info: pageInfo = {} } = media;
+			const { rows, newCount, relCount, stopPaging } = filterPosts(
+				edges, username, startDate, endDate, keywords
+			);
+			rowsToWrite.push(...rows);
+			totalNew += newCount;
+			totalRel += relCount;
 
-		const userRows = sheets.influList
-			.getRange(4, 1, sheets.influList.getLastRow() - 3, 2)
-			.getValues()
-			.filter(([u, id]) => u && id);
-
-		let totalNew = 0, totalRel = 0;
-		const rowsToWrite = [];
-		const failures = [];
-
-		for (const [username, userId] of userRows) {
-			let endCursor = '';
-			let hasNextPage = true;
-
-			while (hasNextPage) {
-				let media;
-				
-				try {
-					media = fetchPage(userId, endCursor);
-				} catch (err) {
-					failures.push(`${username} : ${err.message}`);
-					break;
-				}
-				
-				if (!media) break;
-
-				const { edges = [], page_info: pageInfo = {} } = media;
-				const { rows, newCount, relCount, stopPaging } = filterPosts(
-					edges, username, startDate, endDate, keywords
-				);
-				rowsToWrite.push(...rows);
-				totalNew += newCount;
-				totalRel += relCount;
-
-				if (stopPaging) {
-					hasNextPage = false;
-				}
-				else if (pageInfo.has_next_page) {
-					endCursor = pageInfo.end_cursor;
-				}
-				else {
-					hasNextPage = false;
-				}
+			if (stopPaging) {
+				hasNextPage = false;
+			}
+			else if (pageInfo.has_next_page) {
+				endCursor = pageInfo.end_cursor;
+			}
+			else {
+				hasNextPage = false;
 			}
 		}
-
-		writeResults(rowsToWrite, sheets.result);
-		sheets.main.getRange('C7').setValue(totalNew);
-		sheets.main.getRange('C8').setValue(totalRel);
-
-		const failCount = failures.length;
-		const failDetails = failCount
-			? `\n\n실패 상세:\n${failures.join('\n')}`
-			: '';
-		ui.alert(
-		`Instagram 트래킹 결과\n\n전체 포스트: ${totalNew}\n관련 포스트: ${totalRel}\n실패 요청: ${failCount}${failDetails}`
-		);
-
-		log(`✅ Instagram 트래킹 완료: 전체체 ${totalNew}, 관련 ${totalRel}`);
-	} finally {
-		lock.releaseLock();
 	}
+
+	writeResults(rowsToWrite, sheets.result);
+	sheets.main.getRange('C7').setValue(totalNew);
+	sheets.main.getRange('C8').setValue(totalRel);
+	log(`✅ Instagram 트래킹 완료: 전체 ${totalNew}, 관련 ${totalRel}`);
+	const failCount = failures.length;
+	const failDetails = failCount
+		? `\n\n실패 상세:\n${failures.join('\n')}`
+		: '';
+	ui.alert(
+	`Instagram 트래킹 결과\n\n전체 포스트: ${totalNew}\n관련 포스트: ${totalRel}\n실패 요청: ${failCount}${failDetails}`
+	);
 };

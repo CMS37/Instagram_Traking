@@ -6,8 +6,7 @@ const buildTkUserIdRequest = (username) => {
 		method: 'get',
 		headers: {
 			'x-rapidapi-host': Config.RAPIDAPI_TK_HOST,
-			'x-rapidapi-key': '927bff4967msh9acd10f200aab13p188a5djsn6be055db9f6b'
-			// 'x-rapidapi-key': apiKey
+			'x-rapidapi-key': apiKey
 		},
 		muteHttpExceptions: true
 	};

@@ -62,90 +62,84 @@ const filterTikTokPosts = (items, username, startDate, endDate, keywords) => {
 	return { rows, newCount, relCount, stopPaging };
 };
 
-function runTikTokTracking() {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-
-  try {
+const runTikTokTracking = () => {
     const ui = SpreadsheetApp.getUi();
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheets = {
-      main:      ss.getSheetByName('메인'),
-      influList: ss.getSheetByName('인플루언서목록'),
-      result:    ss.getSheetByName('틱톡 결과'),
-      keywords:  ss.getSheetByName('키워드목록')
+		main:      ss.getSheetByName('메인'),
+		influList: ss.getSheetByName('인플루언서목록'),
+		result:    ss.getSheetByName('틱톡 결과'),
+		keywords:  ss.getSheetByName('키워드목록')
     };
 
     const parseDate = cellRef => {
-      const d = new Date(sheets.main.getRange(cellRef).getValue());
-      if (isNaN(d)) {
-        throw new Error(`메인 시트 ${cellRef}에 올바른 날짜(YYYY-MM-DD)를 입력하세요.`);
-      }
-      return d;
+		const d = new Date(sheets.main.getRange(cellRef).getValue());
+		if (isNaN(d)) {
+			throw new Error(`메인 시트 ${cellRef}에 올바른 날짜(YYYY-MM-DD)를 입력하세요.`);
+		}
+		return d;
     };
 
     const startDate = parseDate('C3');
     const endDate   = parseDate('C4');
 
     const keywords = sheets.keywords
-      .getRange(2, 1, sheets.keywords.getLastRow() - 1, 1)
-      .getValues()
-      .flat()
-      .filter(Boolean)
-      .map(k => `${k}`.toLowerCase());
+		.getRange(2, 1, sheets.keywords.getLastRow() - 1, 1)
+		.getValues()
+		.flat()
+		.filter(Boolean)
+		.map(k => `${k}`.toLowerCase());
 
     const userRows = sheets.influList
-      .getRange(4, 3, sheets.influList.getLastRow() - 3, 2)
-      .getValues()
-      .filter(([name, secUid]) => name && secUid);
+		.getRange(4, 3, sheets.influList.getLastRow() - 3, 2)
+		.getValues()
+		.filter(([name, secUid]) => name && secUid);
 
     let totalNew = 0, totalRel = 0;
     const allRows = [];
     const failures = [];
 
     for (const [username, secUid] of userRows) {
-      let cursor = '0';
-      let hasMore = true;
+		let cursor = '0';
+		let hasMore = true;
 
-      while (hasMore) {
-        let data;
-        try {
-          data = fetchTikTokPage(secUid, cursor);
-        } catch (err) {
-          failures.push(`${username}: ${err.message}`);
-          break;
-        }
+		while (hasMore) {
+			let data;
+			try {
+				data = fetchTikTokPage(secUid, cursor);
+			} catch (err) {
+				failures.push(`${username}: ${err.message}`);
+				break;
+			}
 
-        const items = data.itemList;
-        const { rows, newCount, relCount, stopPaging } = filterTikTokPosts(
-          items, username, startDate, endDate, keywords
-        );
-        allRows.push(...rows);
-        totalNew += newCount;
-        totalRel += relCount;
+			const items = data.itemList;
+			const { rows, newCount, relCount, stopPaging } = filterTikTokPosts(
+			items, username, startDate, endDate, keywords
+			);
+			allRows.push(...rows);
+			totalNew += newCount;
+			totalRel += relCount;
 
-        if (stopPaging) {
-          hasMore = false;
-        } else if ((data.cursor != '-1') && data.hasMore) {
-          cursor = data.cursor;
-        } else {
-          hasMore = false;
-        }
-      }
+			if (stopPaging) {
+				hasMore = false;
+			} else if ((data.cursor != '-1')) {
+				cursor = data.cursor;
+			} else {
+				hasMore = false;
+			}
+		}
     }
 
     writeResults(allRows, sheets.result);
-    sheets.main.getRange('C7').setValue(totalNew);
-    sheets.main.getRange('C8').setValue(totalRel);
+    sheets.main.getRange('C11').setValue(totalNew);
+    sheets.main.getRange('C12').setValue(totalRel);
+	log(`✅ TikTok 트래킹 완료: 전체 ${totalNew}, 관련 ${totalRel}`);
 
     const failCount = failures.length;
-    const failMsg = failCount ? `\n\n실패 상세:\n${failures.join('\n')}` : '';
+    const failMsg = failCount
+		?`\n\n실패 상세:\n${failures.join('\n')}`
+		: '';
     ui.alert(
-      `TikTok 트래킹 결과\n\n전체 포스트: ${totalNew}\n관련 포스트: ${totalRel}\n실패 요청: ${failCount}${failMsg}`
+		`TikTok 트래킹 결과\n\n전체 포스트: ${totalNew}\n관련 포스트: ${totalRel}\n실패 요청: ${failCount}${failMsg}`
     );
-
-    log(`✅ TikTok 트래킹 완료: 전체 ${totalNew}, 관련 ${totalRel}`);
-  } finally {
-    lock.releaseLock();
-  }
 }
