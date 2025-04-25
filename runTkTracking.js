@@ -1,94 +1,151 @@
-const buildTkUserPostsUrl = (username, oldest_createtime) => {
-	const endpoint = "/tt/user/posts";
-	const params = {
-		username,
-		depth: 1,
-		oldest_createtime,
-		token: Config.TOKEN,
-	};
-	const qs = Object.entries(params)
-		.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-		.join('&');
-	return `${Config.API_ROOT}${endpoint}?${qs}`;
+const buildTikTokUserPostsRequest = (secUid, count = 35, cursor = '0') => {
+  const apiKey = getRequiredProperty('RAPIDAPI_KEY');
+  const url = `https://${Config.RAPIDAPI_TK_HOST}/api/user/posts`;
+  let qs = `?secUid=${encodeURIComponent(secUid)}&count=${count}&cursor=${cursor}`;
+  return {
+    url: `${url}${qs}`,
+    options: {
+      method: 'get',
+      headers: {
+        'x-rapidapi-host': Config.RAPIDAPI_TK_HOST,
+        'x-rapidapi-key': apiKey
+      },
+      muteHttpExceptions: true
+    }
+  };
 };
 
-const runTikTokTracking = () => {
-	const ui	= SpreadsheetApp.getUi();
-	const ss    = SpreadsheetApp.getActiveSpreadsheet();
-	const main  = ss.getSheetByName('메인');
-	const inf   = ss.getSheetByName('인플루언서목록');
-	const res     = ss.getSheetByName('틱톡 결과');
-	const kwSheet = ss.getSheetByName('키워드목록');
+const fetchTikTokPage = (secUid, cursor = '0') => {
+  const { url, options } = buildTikTokUserPostsRequest(secUid, 35, cursor);
+  const resp = UrlFetchApp.fetch(url, options);
+  if (resp.getResponseCode() !== 200) throw new Error(`HTTP ${resp.getResponseCode()}`);
+  const json = JSON.parse(resp.getContentText());
+  const data = json.data;
+  if (!data || !Array.isArray(data.itemList)) {
+    throw new Error('포스트를 불러올 수 없습니다.');
+  }
+  return data;
+};
 
-	const startDate = new Date(main.getRange('C3').getValue());
-	const endDate   = new Date(main.getRange('C4').getValue());
-	if (!(startDate instanceof Date) || isNaN(startDate) || !(endDate instanceof Date) || isNaN(endDate)) {
-		throw new Error('메인 시트 C3/C4에 올바른 날짜 형식(YYYY-MM-DD)을 입력하세요.');
-	}
+const filterTikTokPosts = (items, username, startDate, endDate, keywords) => {
+	const rows = [];
+	let newCount = 0, relCount = 0;
+	let stopPaging = false;
 
-	const keywords = kwSheet.getRange(2,1, kwSheet.getLastRow()-1,1)
-		.getValues().flat().filter(Boolean).map(k=>k.toLowerCase());
-
-	const rawRows = inf.getRange(4, 3, inf.getLastRow() - 3, 1).getValues();
-	const userRows = rawRows.map(r => r[0]).filter(Boolean);
-
-	const urls  = userRows.map(u => 
-		buildTkUserPostsUrl(u, Math.floor(startDate.getTime()/1000))
-	);
-	const resps = fetchAllInBatches(urls, Config.BATCH_SIZE, Config.DELAY_MS);
-  
-	const rowsToWrite = [];
-	let totalNew = 0, totalRel = 0;
-  
-	resps.forEach((resp, i) => {
-		if (resp.getResponseCode() !== 200) return;
+	for (const item of items) {
+		const ts = new Date(item.createTime * 1000);
 		
-		const items = JSON.parse(resp.getContentText())?.data || [];
+		if (ts <= startDate) {
+			stopPaging = true;
+			break;
+		}
+		if (ts > endDate) continue;
+		
+		newCount++;
+		const descLower = (item.desc || '').toLowerCase();
+		if (keywords.length && !keywords.some(k => descLower.includes(k))) continue;
 
-		items.forEach(w => {
-			const ts = new Date(w.create_time * 1000);
-			if (ts <= startDate || ts >= endDate) return;
-			totalNew++;
-
-			const username = userRows[i];
-			const desc = w.desc || '';
-			if (!keywords.some(k => desc.toLowerCase().includes(k))) return;
-			totalRel++;
-
-			play = w.statistics?.play_count || 0;
-			digg = w.statistics?.digg_count || 0;
-			collect = w.statistics?.collect_count || 0;
-			comment = w.statistics?.comment_count || 0;
-
-			rowsToWrite.push([
-				username,
-				ts,
-				`https://www.tiktok.com/@${username}/video/${w.aweme_id}`,
-				desc,
-				play,
-				digg,
-				comment,
-				collect
-			]);
-		})
-	});
-
-	if (rowsToWrite.length) {
-	  const start = res.getLastRow() + 1;
-	  res.getRange(start,1, rowsToWrite.length, rowsToWrite[0].length)
-		 .setValues(rowsToWrite);
+		relCount++;
+		const videoUrl = `https://www.tiktok.com/@${username}/video/${item.id}`;
+		rows.push([
+			username,
+			ts,
+			videoUrl,
+			item.desc,
+			item.stats.playCount,
+			item.stats.diggCount,
+			item.stats.commentCount,
+			item.stats.collectCount,
+		]);
 	}
 
-	main.getRange('C11').setValue(totalNew);
-	main.getRange('C12').setValue(totalRel);
-  
-	const failures = getLastFetchFailureLogs();
-	const failCount = failures.length;
-	const failLines = failures.length
-		? '\n\n실패 상세:\n' + failures.join('\n')
-		: '';
-	ui.alert(
-		`Tiktok 트래킹 결과\n\n신규 포스트: ${totalNew}\n관련 포스트: ${totalRel}\n실패 요청: ${failCount}${failLines}`
-	);
-	log(`✅ Tiktok 트래킹 완료: 신규 ${totalNew}, 관련 ${totalRel}`);
+	return { rows, newCount, relCount, stopPaging };
+};
+
+function runTikTokTracking() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    const ui = SpreadsheetApp.getUi();
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheets = {
+      main:      ss.getSheetByName('메인'),
+      influList: ss.getSheetByName('인플루언서목록'),
+      result:    ss.getSheetByName('틱톡 결과'),
+      keywords:  ss.getSheetByName('키워드목록')
+    };
+
+    const parseDate = cellRef => {
+      const d = new Date(sheets.main.getRange(cellRef).getValue());
+      if (isNaN(d)) {
+        throw new Error(`메인 시트 ${cellRef}에 올바른 날짜(YYYY-MM-DD)를 입력하세요.`);
+      }
+      return d;
+    };
+
+    const startDate = parseDate('C3');
+    const endDate   = parseDate('C4');
+
+    const keywords = sheets.keywords
+      .getRange(2, 1, sheets.keywords.getLastRow() - 1, 1)
+      .getValues()
+      .flat()
+      .filter(Boolean)
+      .map(k => `${k}`.toLowerCase());
+
+    const userRows = sheets.influList
+      .getRange(4, 3, sheets.influList.getLastRow() - 3, 2)
+      .getValues()
+      .filter(([name, secUid]) => name && secUid);
+
+    let totalNew = 0, totalRel = 0;
+    const allRows = [];
+    const failures = [];
+
+    for (const [username, secUid] of userRows) {
+      let cursor = '0';
+      let hasMore = true;
+
+      while (hasMore) {
+        let data;
+        try {
+          data = fetchTikTokPage(secUid, cursor);
+        } catch (err) {
+          failures.push(`${username}: ${err.message}`);
+          break;
+        }
+
+        const items = data.itemList;
+        const { rows, newCount, relCount, stopPaging } = filterTikTokPosts(
+          items, username, startDate, endDate, keywords
+        );
+        allRows.push(...rows);
+        totalNew += newCount;
+        totalRel += relCount;
+
+        if (stopPaging) {
+          hasMore = false;
+        } else if ((data.cursor != '-1') && data.hasMore) {
+          cursor = data.cursor;
+        } else {
+          hasMore = false;
+        }
+      }
+    }
+
+    writeResults(allRows, sheets.result);
+    sheets.main.getRange('C7').setValue(totalNew);
+    sheets.main.getRange('C8').setValue(totalRel);
+
+    const failCount = failures.length;
+    const failMsg = failCount ? `\n\n실패 상세:\n${failures.join('\n')}` : '';
+    ui.alert(
+      `TikTok 트래킹 결과\n\n전체 포스트: ${totalNew}\n관련 포스트: ${totalRel}\n실패 요청: ${failCount}${failMsg}`
+    );
+
+    log(`✅ TikTok 트래킹 완료: 전체 ${totalNew}, 관련 ${totalRel}`);
+  } finally {
+    lock.releaseLock();
+  }
 }

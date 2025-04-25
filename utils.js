@@ -21,3 +21,8 @@ const fetchAllInBatches = (requests, batchSize = 20, delay = 100) => {
 	return responses;
 };
 
+const writeResults = (rows, sheet) => {
+	if (!rows.length) return;
+	sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length)
+		 .setValues(rows);
+};

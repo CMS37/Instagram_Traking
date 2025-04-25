@@ -2,7 +2,7 @@ const PAGE_SIZE = 12;
 
 const buildInsUserPostsRequest = (userId, count = PAGE_SIZE, endCursor = '') => {
 	const apiKey = getRequiredProperty('RAPIDAPI_KEY');
-	const url = `https://${Config.RAPIDAPI_HOST}/user-feeds2`;
+	const url = `https://${Config.RAPIDAPI_INS_HOST}/user-feeds2`;
 	let qs = `?id=${encodeURIComponent(userId)}&count=${count}`;
 	if (endCursor) qs += `&end_cursor=${encodeURIComponent(endCursor)}`;
 	
@@ -11,7 +11,7 @@ const buildInsUserPostsRequest = (userId, count = PAGE_SIZE, endCursor = '') => 
 		options: {
 		method: 'get',
 		headers: {
-			'x-rapidapi-host': Config.RAPIDAPI_HOST,
+			'x-rapidapi-host': Config.RAPIDAPI_INS_HOST,
 			'x-rapidapi-key': apiKey
 		},
 		muteHttpExceptions: true
@@ -62,24 +62,17 @@ const filterPosts = (edges, username, startDate, endDate, keywords) => {
 		: 'x';
 
 		rows.push([
-		username,
-		ts,
-		`https://www.instagram.com/p/${node.shortcode}`,
-		caption,
-		viewCount,
-		likeCount,
-		commentCount
+			username,
+			ts,
+			`https://www.instagram.com/p/${node.shortcode}`,
+			caption,
+			viewCount,
+			likeCount,
+			commentCount
 		]);
 	}
 
 	return { rows, newCount, relCount, stopPaging };
-};
-
-const writeResults = (rows, sheet) => {
-	if (!rows.length) return;
-	const startRow = sheet.getLastRow() + 1;
-	sheet.getRange(startRow, 1, rows.length, rows[0].length)
-		.setValues(rows);
 };
 
 const runInstagramTracking = () => {
@@ -168,10 +161,10 @@ const runInstagramTracking = () => {
 			? `\n\n실패 상세:\n${failures.join('\n')}`
 			: '';
 		ui.alert(
-		`Instagram 트래킹 결과\n\n신규 포스트: ${totalNew}\n관련 포스트: ${totalRel}\n실패 요청: ${failCount}${failDetails}`
+		`Instagram 트래킹 결과\n\n전체 포스트: ${totalNew}\n관련 포스트: ${totalRel}\n실패 요청: ${failCount}${failDetails}`
 		);
 
-		log(`✅ Instagram 트래킹 완료: 신규 ${totalNew}, 관련 ${totalRel}`);
+		log(`✅ Instagram 트래킹 완료: 전체체 ${totalNew}, 관련 ${totalRel}`);
 	} finally {
 		lock.releaseLock();
 	}
