@@ -1,11 +1,11 @@
-const buildInsUserIdRequest = (username) => {
+const buildTkUserIdRequest = (username) => {
 	const apiKey = getRequiredProperty('RAPIDAPI_KEY');
-	const base    = `https://${Config.RAPIDAPI_INS_HOST}/id`;
-	const url = `${base}?username=${encodeURIComponent(username)}`;
+	const base    = `https://${Config.RAPIDAPI_TK_HOST}/api/user/info`;
+	const url = `${base}?uniqueId=${encodeURIComponent(username)}`;
 	const options = {
 		method: 'get',
 		headers: {
-			'x-rapidapi-host': Config.RAPIDAPI_INS_HOST,
+			'x-rapidapi-host': Config.RAPIDAPI_TK_HOST,
 			'x-rapidapi-key': apiKey
 		},
 		muteHttpExceptions: true
@@ -13,7 +13,7 @@ const buildInsUserIdRequest = (username) => {
 	return { url, options };
   };
 
-const updateInstagramIds = () => {
+const updateTiktokIds = () => {
 	const ss = SpreadsheetApp.getActiveSpreadsheet();
 	const sheet = ss.getSheetByName('인플루언서목록');
 	if (!sheet) {
@@ -21,12 +21,8 @@ const updateInstagramIds = () => {
 		return;
 	}
 	const lastRow = sheet.getLastRow();
-	if (lastRow < 3) {
-		log('✅ 업데이트할 인스타 ID 없음');
-		return;
-	}
 
-	const data = sheet.getRange(3, 1, lastRow - 2, 2).getValues();
+	const data = sheet.getRange(3, 3, lastRow - 2, 2).getValues();
 	const targets = data
 		.map(([username, id], idx) => ({
 		username: username?.toString().trim(),
@@ -36,12 +32,12 @@ const updateInstagramIds = () => {
 		.filter(item => item.needsUpdate);
 
 	if (!targets.length) {
-		log('✅ 업데이트할 인스타 ID 없음');
+		log('✅ 업데이트할 틱톡 ID 없음');
 		return;
 	}
 
 	const requests = targets.map(({ username }) => {
-		const { url, options } = buildInsUserIdRequest(username);
+		const { url, options } = buildTkUserIdRequest(username);
 		return Object.assign({ url , muteHttpExceptions: true }, options);
 	});
 
@@ -53,9 +49,9 @@ const updateInstagramIds = () => {
 		try {
 			if (resp.getResponseCode() !== 200) throw new Error(`HTTP ${resp.getResponseCode()}`);
 				const json = JSON.parse(resp.getContentText());
-			if (json?.status && json.user_id) {
-				sheet.getRange(row, 2).setValue(json.user_id);
-				log(`✅ ${username} → ID: ${json.user_id}`);
+			if (json?.userInfo && json.userInfo.user.secUid) {
+				sheet.getRange(row, 4).setValue(json.userInfo.user.secUid);
+				log(`✅ ${username} → secUID: ${json.userInfo.user.secUid}`);
 			} else {
 				throw new Error(`user_id 응답 없음: ${resp.getContentText()}`);
 			}
