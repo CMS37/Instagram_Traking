@@ -1,5 +1,3 @@
-let lastFetchFailures = [];
-
 const log = (message) => {
 	Logger.log(message);
 }
@@ -10,27 +8,16 @@ const getRequiredProperty = (key) => {
 	return value;
 };
 
-const fetchAllInBatches = (urls, batchSize = 20, delay = 100) => {
-	let responses = [];
-	for (let i = 0; i < urls.length; i += batchSize) {
-		const batch = urls.slice(i, i + batchSize);
-		const requests = batch.map(url => ({ url, muteHttpExceptions: true }));
-		const respsBatch = UrlFetchApp.fetchAll(requests);
-
-		respsBatch.forEach((resp, idx) => {
-			const code = resp.getResponseCode();
-			if (code !== 200) {
-				const msg = `${batch[idx].url} → HTTP ${code}`;
-				lastFetchFailures.push(msg);
-				log(`⚠️ fetchAllInBatches 오류: ${msg}`);
-			}
-		});
-    	responses = responses.concat(respsBatch);
-		if (i + batchSize < urls.length) {
+const fetchAllInBatches = (requests, batchSize = 20, delay = 100) => {
+	const responses = [];
+	for (let i = 0; i < requests.length; i += batchSize) {
+		const batch = requests.slice(i, i + batchSize);
+		const batchResponses = UrlFetchApp.fetchAll(batch);
+		responses.push(...batchResponses);
+		if (i + batchSize < requests.length) {
 			Utilities.sleep(delay);
 		}
 	}
 	return responses;
 };
 
-const getLastFetchFailureLogs = () => lastFetchFailures.slice();

@@ -1,18 +1,17 @@
-const RAPIDAPI_HOST = 'instagram-looter2.p.rapidapi.com';
-const API_BASE_URL = `https://${RAPIDAPI_HOST}/user-feeds2`;
 const PAGE_SIZE = 12;
 
 const buildInsUserPostsRequest = (userId, count = PAGE_SIZE, endCursor = '') => {
 	const apiKey = getRequiredProperty('RAPIDAPI_KEY');
+	const url = `https://${Config.RAPIDAPI_HOST}/user-feeds2`;
 	let qs = `?id=${encodeURIComponent(userId)}&count=${count}`;
 	if (endCursor) qs += `&end_cursor=${encodeURIComponent(endCursor)}`;
 	
 	return {
-		url: `${API_BASE_URL}${qs}`,
+		url: `${url}${qs}`,
 		options: {
 		method: 'get',
 		headers: {
-			'x-rapidapi-host': RAPIDAPI_HOST,
+			'x-rapidapi-host': Config.RAPIDAPI_HOST,
 			'x-rapidapi-key': apiKey
 		},
 		muteHttpExceptions: true
