@@ -28,11 +28,14 @@ const updateInstagramIds = () => {
 
 	const data = sheet.getRange(3, 1, lastRow - 2, 2).getValues();
 	const targets = data
-		.map(([username, id], idx) => ({
-		username: username?.toString().trim(),
-		row: idx + 3,
-		needsUpdate: !!username && !id
-		}))
+		.map(([rawName, id], idx) => {
+			const username = extractInstagramUsername(rawName);
+			return {
+				row: idx + 3,
+				username,
+				needsUpdate: !!username && !id,
+			};
+		})
 		.filter(item => item.needsUpdate);
 
 	if (!targets.length) {
@@ -54,6 +57,7 @@ const updateInstagramIds = () => {
 			if (resp.getResponseCode() !== 200) throw new Error(`HTTP ${resp.getResponseCode()}`);
 				const json = JSON.parse(resp.getContentText());
 			if (json?.status && json.user_id) {
+				sheet.getRange(row, 1).setValue(username);
 				sheet.getRange(row, 2).setValue(json.user_id);
 				log(`✅ ${username} → ID: ${json.user_id}`);
 			} else {

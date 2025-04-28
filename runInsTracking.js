@@ -97,7 +97,11 @@ const runInstagramTracking = () => {
 	let userRows = sheets.influList
 		.getRange(4, 1, sheets.influList.getLastRow() - 3, 2)
 		.getValues()
-		.filter(([u, id]) => u && id);
+		.map(([rawname, id]) => {
+			const username = extractInstagramUsername(rawname);
+			return [username, id?.toString().trim() || ''];
+		})
+		.filter(([username, id]) => username && id)
 	log(`시트 데이터 수집 완료`);
 
 	{

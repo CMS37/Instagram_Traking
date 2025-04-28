@@ -8,7 +8,7 @@ const getRequiredProperty = (key) => {
 	return value;
 };
 
-const fetchAllInBatches = (requests, batchSize = 20, delay = 100) => {
+const fetchAllInBatches = (requests, batchSize = 20, delay = 50) => {
 	const responses = [];
 	for (let i = 0; i < requests.length; i += batchSize) {
 		const batch = requests.slice(i, i + batchSize);
@@ -26,3 +26,11 @@ const writeResults = (rows, sheet) => {
 	sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length)
 		 .setValues(rows);
 };
+
+const extractInstagramUsername = (raw) => {
+	const s = raw?.toString().trim() || '';
+	const regex = /(?:https?:\/\/)?(?:www\.)?instagram\.com\/([A-Za-z0-9._]+)/i;
+	const m = s.match(regex);
+	if (m && m[1]) return m[1];
+	return s.replace(/^@+/, '');
+}
