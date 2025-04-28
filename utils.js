@@ -8,7 +8,7 @@ const getRequiredProperty = (key) => {
 	return value;
 };
 
-const fetchAllInBatches = (requests, batchSize = 20, delay = 50) => {
+const fetchAllInBatches = (requests, batchSize = 20, delay = 500) => {
 	const responses = [];
 	for (let i = 0; i < requests.length; i += batchSize) {
 		const batch = requests.slice(i, i + batchSize);
@@ -33,4 +33,13 @@ const extractInstagramUsername = (raw) => {
 	const m = s.match(regex);
 	if (m && m[1]) return m[1];
 	return s.replace(/^@+/, '');
+}
+
+const extractTikTokUsername = (raw) => {
+	const s = raw?.toString().trim() || '';
+	const m = s.match(
+	  /(?:https?:\/\/)?(?:www\.)?tiktok\.com\/(@?[A-Za-z0-9._]+)/i
+	);
+	if (m && m[1]) return m[1];
+	return s;
 }
