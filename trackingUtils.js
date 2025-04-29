@@ -52,7 +52,7 @@ const filterTikTokPosts = (items, username, startDate, endDate, keywords) => {
 		const descLower = (item.desc || '').toLowerCase();
 		if (keywords.length && !keywords.some(k => descLower.includes(k))) continue;
 		relCount++;
-		rows.push([username, ts, `https://www.tiktok.com/${username}/video/${item.id}`, item.desc, item.stats.playCount, item.stats.diggCount, item.stats.commentCount, item.stats.collectCount]);
+		rows.push([username, ts, `https://www.tiktok.com/@${username}/video/${item.id}`, item.desc, item.stats.playCount, item.stats.diggCount, item.stats.commentCount, item.stats.collectCount]);
 	}
 	return { rows, newCount, relCount, stopPaging };
 };
