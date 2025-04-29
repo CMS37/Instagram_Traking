@@ -62,7 +62,6 @@ const runTracking = ({
 			try {
 				if (resp.getResponseCode() !== 200) throw new Error(`HTTP ${resp.getResponseCode()}`);
 				const json = JSON.parse(resp.getContentText());
-				log(`\n\n${username} (${resp.getResponseCode()})\n${JSON.stringify(json, null, 2)}`);
 				const items = getItems(json);
 				const { rows, newCount, relCount, stopPaging } = filterFn(items, username, startDate, endDate, keywords);
 				rowsToWrite.push(...rows);
