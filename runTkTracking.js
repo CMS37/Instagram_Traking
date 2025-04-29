@@ -34,15 +34,15 @@ const filterTikTokPosts = (items, username, startDate, endDate, keywords) => {
 
 	for (const item of items) {
 		const ts = new Date(item.createTime * 1000);
-		
-		if (ts <= startDate) {
+		if (ts <= startDate && !item.isPinnedItem) {
 			stopPaging = true;
 			break;
 		}
 		if (ts > endDate) continue;
-		
+		 
 		newCount++;
 		const descLower = (item.desc || '').toLowerCase();
+
 		if (keywords.length && !keywords.some(k => descLower.includes(k))) continue;
 
 		relCount++;
@@ -84,6 +84,7 @@ const runTikTokTracking = () => {
 		.getRange(2, 1, sheets.keywords.getLastRow() - 1)
 		.getValues().flat()
 		.filter(Boolean).map(k => `${k}`.toLowerCase());
+
 
 	let userRows = sheets.influList
 		.getRange(4, 3, sheets.influList.getLastRow() - 3, 2)
