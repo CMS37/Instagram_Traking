@@ -1,45 +1,33 @@
-const log = (message) => {
-	Logger.log(message);
-}
+const log = message => Logger.log(message);
 
-const getRequiredProperty = (key) => {
+const getRequiredProperty = key => {
 	const value = PropertiesService.getScriptProperties().getProperty(key);
 	if (!value) throw new Error(`"${key}" 항목이 설정되어 있지 않습니다.`);
 	return value;
 };
 
-const fetchAllInBatches = (requests, batchSize = 20, delay = 500) => {
+const fetchAllInBatches = (requests, batchSize = Config.BATCH_SIZE, delay = Config.DELAY_MS) => {
 	const responses = [];
 	for (let i = 0; i < requests.length; i += batchSize) {
-		const batch = requests.slice(i, i + batchSize);
-		const batchResponses = UrlFetchApp.fetchAll(batch);
-		responses.push(...batchResponses);
-		if (i + batchSize < requests.length) {
-			Utilities.sleep(delay);
-		}
+		responses.push(...UrlFetchApp.fetchAll(requests.slice(i, i + batchSize)));
+		if (i + batchSize < requests.length) Utilities.sleep(delay);
 	}
 	return responses;
 };
 
 const writeResults = (rows, sheet) => {
 	if (!rows.length) return;
-	sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length)
-		 .setValues(rows);
+	sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
 };
 
-const extractInstagramUsername = (raw) => {
-	const s = raw?.toString().trim() || '';
-	const regex = /(?:https?:\/\/)?(?:www\.)?instagram\.com\/([A-Za-z0-9._]+)/i;
-	const m = s.match(regex);
-	if (m && m[1]) return m[1];
-	return s.replace(/^@+/, '');
-}
+const extractInstagramUsername = raw => {
+	const s = raw?.toString().trim() || "";
+	const m = s.match(/(?:https?:\/\/)?(?:www\.)?instagram\.com\/([A-Za-z0-9._]+)/i);
+	return m?.[1] ?? s.replace(/^@+/, "");
+};
 
-const extractTikTokUsername = (raw) => {
-	const s = raw?.toString().trim() || '';
-	const m = s.match(
-	  /(?:https?:\/\/)?(?:www\.)?tiktok\.com\/(@?[A-Za-z0-9._]+)/i
-	);
-	if (m && m[1]) return m[1];
-	return s;
-}
+const extractTikTokUsername = raw => {
+	const s = raw?.toString().trim() || "";
+	const m = s.match(/(?:https?:\/\/)?(?:www\.)?tiktok\.com\/(?:@)?([A-Za-z0-9._]+)/i);
+	return m?.[1] ?? s.replace(/^@+/, "");
+};
