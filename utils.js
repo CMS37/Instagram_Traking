@@ -1,3 +1,4 @@
+const RETRY_CODES = [429, 204];
 const log = message => Logger.log(message);
 
 const getRequiredProperty = key => {
@@ -6,13 +7,46 @@ const getRequiredProperty = key => {
 	return value;
 };
 
-const fetchAllInBatches = (requests, batchSize = Config.BATCH_SIZE, delay = Config.DELAY_MS) => {
-	const responses = [];
+const fetchAllWithBackoff = (requests, batchSize = Config.BATCH_SIZE, baseDelay = Config.DELAY_MS, maxRetries = Config.MAX_RETRIES) => {
+	const allResponses = [];
+	// let count = 0;
+
 	for (let i = 0; i < requests.length; i += batchSize) {
-		responses.push(...UrlFetchApp.fetchAll(requests.slice(i, i + batchSize)));
-		if (i + batchSize < requests.length) Utilities.sleep(delay);
+		const batch = requests.slice(i, i + batchSize);
+		// count += batch.length;
+		// log(`요청 ${i + 1} ~ ${i + batch.length}: ${batch.length}건`);
+		let responses = UrlFetchApp.fetchAll(batch);
+
+		let retryItems = batch
+			.map((req, idx) => ({ req, idx }))
+			.filter(({ idx }) => RETRY_CODES.includes(responses[idx].getResponseCode()));
+
+		let attempt = 0, delay = baseDelay;
+		while (retryItems.length > 0 && attempt < maxRetries) {
+			// log(`재시도 ${attempt + 1}회: ${retryItems.length}건`);
+			// count += retryItems.length;
+			Utilities.sleep(delay);
+			const retryReqs = retryItems.map(item => item.req);
+			const retryResps = UrlFetchApp.fetchAll(retryReqs);
+
+			retryItems.forEach((item, j) => {
+				responses[item.idx] = retryResps[j];
+			});
+
+			retryItems = retryItems.filter((item, j) =>
+				RETRY_CODES.includes(retryResps[j].getResponseCode())
+			);
+
+			delay *= 2;
+			attempt++;
+		}
+
+		allResponses.push(...responses);
+
+		if (i + batchSize < requests.length) Utilities.sleep(baseDelay);
 	}
-	return responses;
+	// log (`총 ${count}번 요청`);
+	return allResponses;
 };
 
 const writeResults = (rows, sheet) => {

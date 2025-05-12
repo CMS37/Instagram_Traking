@@ -24,7 +24,7 @@ const updateUserIds = ({
 		.filter(t => t.needs);
 	if (!targets.length) return ui.alert('✅ 업데이트할 유저가 없습니다');
   
-	const responses = fetchAllInBatches(targets.map(t => requestBuilder(t.name)));
+	const responses = fetchAllWithBackoff(targets.map(t => requestBuilder(t.name)));
 	const errs = [];
   
 	responses.forEach((resp, idx) => {

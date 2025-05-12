@@ -56,7 +56,7 @@ const runTracking = ({
 		requests.push(buildRequest(id, cursor));
 		infos.push({ key, username }); });
 		cursors.clear();
-		const responses = fetchAllInBatches(requests);
+		const responses = fetchAllWithBackoff(requests);
 		responses.forEach((resp, idx) => {
 			const { key, username } = infos[idx];
 			try {
@@ -70,7 +70,12 @@ const runTracking = ({
 				const next = getNextCursor(json, items);
 				if (!stopPaging && next) cursors.set(key, next);
 			} catch (err) {
-				failures.push(`${username}: ${err.message}`);
+				if (err.message.includes('HTTP 429')) {
+					failures.push(`${username}: 다른 부서(사용자)가 사용 중입니다. 잠시 후 다시 시도해 주세요.}`);
+				}
+				else {
+					failures.push(`${username}: ${err.message}`);
+				}
 			}
 		});
 	}
