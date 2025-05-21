@@ -12,9 +12,11 @@
 	// Configuration
 	const Config = {
 		TK_HOST: PropertiesService.getScriptProperties().getProperty('TK_HOST'),
-		INS_HOST: PropertiesService.getScriptProperties().getProperty('INS_HOST'),
+		INS_HOST:
+			PropertiesService.getScriptProperties().getProperty('INS_HOST'),
 		API_KEY: PropertiesService.getScriptProperties().getProperty('API_KEY'),
-		LOG_SHEET: PropertiesService.getScriptProperties().getProperty('LOG_SHEET'),
+		LOG_SHEET:
+			PropertiesService.getScriptProperties().getProperty('LOG_SHEET'),
 		BATCH_SIZE: parseInt(
 			PropertiesService.getScriptProperties().getProperty('BATCH_SIZE'),
 			10,
@@ -45,6 +47,27 @@
 		}
 	}
 
+	function recordLog(apiName, count) {
+		const sourceSS = SpreadsheetApp.getActiveSpreadsheet();
+		const sheetName = sourceSS.getName();
+		const logSS = SpreadsheetApp.openById(Config.LOG_SHEET);
+		let logSheet = logSS.getSheetByName(sheetName);
+		if (!logSheet) {
+			logSheet = logSS.insertSheet(sheetName);
+			logSheet
+				.getRange(1, 1, 1, 4)
+				.setValues([
+					['Timestamp', 'UserEmail', 'APIName', 'CallCount'],
+				]);
+			logSheet.setFrozenRows(1);
+		}
+		logSheet.insertRowAfter(1);
+		const userEmail = Session.getActiveUser().getEmail() || 'unknown';
+		logSheet
+			.getRange(2, 1, 1, 4)
+			.setValues([[new Date(), userEmail, apiName, count]]);
+	}
+
 	const fetchAllWithBackoff = (
 		requests,
 		batchSize = Config.BATCH_SIZE,
@@ -52,14 +75,15 @@
 		maxRetries = Config.MAX_RETRIES,
 	) => {
 		const results = [];
-		// let totalCalls = 0;
+		let totalCalls = 0;
 		for (let i = 0; i < requests.length; i += batchSize) {
 			let batch = requests.slice(i, i + batchSize);
 			let attempt = 0;
+			let lastResponses = [];
 			while (attempt <= maxRetries) {
-				// totalCalls += batch.length;
-
+				totalCalls += batch.length;
 				const responses = UrlFetchApp.fetchAll(batch);
+				lastResponses = responses;
 				const retry = [];
 				responses.forEach((resp, idx) => {
 					const code = resp.getResponseCode();
@@ -69,27 +93,23 @@
 						results.push(resp);
 					}
 				});
-
 				if (!retry.length) break;
-
 				batch = retry;
 				Utilities.sleep(delayMs * Math.pow(2, attempt));
 				attempt++;
-				if (attempt >= maxRetries) {
-					results.push(
-						...retry.map((req) => {
-							const err = new Error(
-								`최대 재시도 횟수 초과: ${req.getResponseCode()}`,
-							);
-							err.request = req;
-							return err;
-						}),
+			}
+			if (batch.length) {
+				lastResponses.forEach((resp) => {
+					const err = new Error(
+						`최대 재시도 횟수 초과: HTTP ${resp.getResponseCode()}`,
 					);
-				}
+					err.response = resp;
+					results.push(err);
+				});
 			}
 			Utilities.sleep(delayMs);
 		}
-		return results;
+		return { responses: results, totalCalls };
 	};
 
 	// Extract raw usernames
@@ -106,6 +126,7 @@
 
 	// Generic ID updater
 	function updateUserIds({
+		serviceName,
 		sheetName,
 		rawNameCol,
 		idCol,
@@ -134,11 +155,14 @@
 			})
 			.filter((t) => t.needs);
 		if (!targets.length) return ui.alert('✅ 업데이트할 유저가 없습니다');
-		const responses = fetchAllWithBackoff(
+		const { responses, totalCalls } = fetchAllWithBackoff(
 			targets.map((t) => requestBuilder(t.name)),
 		);
 		const errs = [];
-
+		log(
+			`${serviceName} API 호출: ${responses.length}개, 총 ${totalCalls}회`,
+		);
+		recordLog(`${serviceName} ID update`, totalCalls);
 		responses.forEach((resp, idx) => {
 			const { row, name } = targets[idx];
 			try {
@@ -209,6 +233,7 @@
 	// TikTok ID
 	function updateTikTokIds() {
 		return updateUserIds({
+			serviceName: 'TikTok',
 			sheetName: '인플루언서목록',
 			rawNameCol: 3,
 			idCol: 4,
@@ -222,6 +247,7 @@
 	// Instagram ID
 	function updateInstagramIds() {
 		return updateUserIds({
+			serviceName: 'Instagram',
 			sheetName: '인플루언서목록',
 			rawNameCol: 1,
 			idCol: 2,
@@ -391,7 +417,11 @@
 				infos.push({ key, username });
 			});
 			cursors.clear();
-			const responses = fetchAllWithBackoff(requests);
+			const { responses, totalCalls } = fetchAllWithBackoff(requests);
+			log(
+				`${serviceName} API 호출: ${responses.length}개, 총 ${totalCalls}회`,
+			);
+			recordLog(`${serviceName} API`, totalCalls);
 			responses.forEach((resp, idx) => {
 				const { key, username } = infos[idx];
 				if (resp instanceof Error) {
