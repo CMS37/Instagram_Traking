@@ -1,10 +1,9 @@
-const RETRY_CODES = [429, 204];
-const log = message => Logger.log(message);
+const RETRY_CODES = [204, 429, 500, 502, 503, 504];
 
 const getRequiredProperty = key => {
-	const value = PropertiesService.getScriptProperties().getProperty(key);
-	if (!value) throw new Error(`"${key}" 항목이 설정되어 있지 않습니다.`);
-	return value;
+	const val = PropertiesService.getScriptProperties().getProperty(key);
+	if (!val) throw new Error(`Property "${key}" is not set.`);
+	return val;
 };
 
 const fetchAllWithBackoff = (requests, batchSize = Config.BATCH_SIZE, baseDelay = Config.DELAY_MS, maxRetries = Config.MAX_RETRIES) => {
