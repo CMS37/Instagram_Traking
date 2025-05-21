@@ -5,7 +5,7 @@ const updateUserIds = ({
 	requestBuilder,
 	extractRawName,
 	extractIdFromResponse,
-	rawPrefix = ''
+	rawPrefix = '',
 }) => {
 	const ss = SpreadsheetApp.getActiveSpreadsheet();
 	const sheet = ss.getSheetByName(sheetName);
@@ -18,19 +18,26 @@ const updateUserIds = ({
 	const targets = data
 		.map(([raw], i) => {
 			const name = extractRawName(raw);
-			const existing = sheet.getRange(i + 3, idCol).getValue().toString().trim();
+			const existing = sheet
+				.getRange(i + 3, idCol)
+				.getValue()
+				.toString()
+				.trim();
 			return { row: i + 3, name, needs: !!name && !existing };
 		})
-		.filter(t => t.needs);
+		.filter((t) => t.needs);
 	if (!targets.length) return ui.alert('✅ 업데이트할 유저가 없습니다');
-  
-	const responses = fetchAllWithBackoff(targets.map(t => requestBuilder(t.name)));
+
+	const responses = fetchAllWithBackoff(
+		targets.map((t) => requestBuilder(t.name)),
+	);
 	const errs = [];
-  
+
 	responses.forEach((resp, idx) => {
 		const { row, name } = targets[idx];
 		try {
-			if (resp.getResponseCode() !== 200) throw new Error(`HTTP ${resp.getResponseCode()}`);
+			if (resp.getResponseCode() !== 200)
+				throw new Error(`HTTP ${resp.getResponseCode()}`);
 			const j = JSON.parse(resp.getContentText());
 			const id = extractIdFromResponse(j);
 			if (!id) throw new Error('ID not found');
@@ -40,6 +47,6 @@ const updateUserIds = ({
 			errs.push(`${name}: ${e.message}`);
 		}
 	});
-  
+
 	if (errs.length) ui.alert(`ID 업데이트 오류:\n${errs.join('\n')}`);
 };

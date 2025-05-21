@@ -1,1 +1,5 @@
-test.json
+node_modules/
+.prettierrc
+eslint.config.cjs
+package-lock.json
+package.json
