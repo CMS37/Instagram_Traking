@@ -31,10 +31,8 @@
 		),
 	};
 
-	const RETRY_CODES = [204, 429, 500, 502, 503, 504];
-
 	// Utilities
-	const log = (message) => Logger.log(message);
+	// const log = (message) => Logger.log(message);
 
 	function writeResults(rows, sheet) {
 		const lastRow = sheet.getLastRow();
@@ -74,16 +72,20 @@
 		delayMs = Config.DELAY_MS,
 		maxRetries = Config.MAX_RETRIES,
 	) => {
+		const RETRY_CODES = [204, 429, 500, 502, 503, 504];
 		const results = [];
+
 		let totalCalls = 0;
+
 		for (let i = 0; i < requests.length; i += batchSize) {
 			let batch = requests.slice(i, i + batchSize);
 			let attempt = 0;
 			let lastResponses = [];
-			while (attempt <= maxRetries) {
+			while (batch.length && attempt <= maxRetries) {
 				totalCalls += batch.length;
 				const responses = UrlFetchApp.fetchAll(batch);
 				lastResponses = responses;
+
 				const retry = [];
 				responses.forEach((resp, idx) => {
 					const code = resp.getResponseCode();
@@ -93,12 +95,17 @@
 						results.push(resp);
 					}
 				});
-				if (!retry.length) break;
+
+				if (!retry.length) {
+					batch = [];
+					break;
+				}
+
 				batch = retry;
 				Utilities.sleep(delayMs * Math.pow(2, attempt));
 				attempt++;
 			}
-			if (batch.length) {
+			if (batch.length && attempt > maxRetries) {
 				lastResponses.forEach((resp) => {
 					const err = new Error(
 						`최대 재시도 횟수 초과: HTTP ${resp.getResponseCode()}`,
@@ -107,7 +114,6 @@
 					results.push(err);
 				});
 			}
-			Utilities.sleep(delayMs);
 		}
 		return { responses: results, totalCalls };
 	};
@@ -139,44 +145,70 @@
 		const sheet = ss.getSheetByName(sheetName);
 		const ui = SpreadsheetApp.getUi();
 		if (!sheet) throw new Error(`Sheet "${sheetName}" not found.`);
-		const lastRow = sheet.getLastRow();
-		if (lastRow < 3) return ui.alert('✅ 업데이트할 유저가 없습니다');
 
-		const data = sheet.getRange(4, rawNameCol, lastRow - 2, 1).getValues();
-		const targets = data
-			.map(([raw], i) => {
+		const lastRow = sheet.getLastRow();
+		if (lastRow < 4) return ui.alert('✅ 업데이트할 유저가 없습니다');
+
+		const rowCount = lastRow - 3;
+
+		const rawVals = sheet
+			.getRange(4, rawNameCol, rowCount, 1)
+			.getValues()
+			.flat();
+		const idVals = sheet.getRange(4, idCol, rowCount, 1).getValues().flat();
+
+		const targets = rawVals
+			.map((raw, idx) => {
 				const name = extractRawName(raw);
-				const existing = sheet
-					.getRange(i + 4, idCol)
-					.getValue()
-					.toString()
-					.trim();
-				return { row: i + 4, name, needs: !!name && !existing };
+				const existing = idVals[idx].toString().trim();
+				return { row: idx + 4, name, needs: !!name && !existing };
 			})
 			.filter((t) => t.needs);
+
 		if (!targets.length) return ui.alert('✅ 업데이트할 유저가 없습니다');
+
 		const { responses, totalCalls } = fetchAllWithBackoff(
 			targets.map((t) => requestBuilder(t.name)),
 		);
-		const errs = [];
-		log(
-			`${serviceName} API 호출: ${responses.length}개, 총 ${totalCalls}회`,
-		);
 		recordLog(`${serviceName} ID update`, totalCalls);
-		responses.forEach((resp, idx) => {
-			const { row, name } = targets[idx];
-			try {
-				if (resp.getResponseCode() !== 200)
-					throw new Error(`HTTP ${resp.getResponseCode()}`);
-				const j = JSON.parse(resp.getContentText());
-				const id = extractIdFromResponse(j);
-				if (!id) throw new Error('ID not found');
-				sheet.getRange(row, rawNameCol).setValue(rawPrefix + name);
-				sheet.getRange(row, idCol).setValue(id);
-			} catch (e) {
-				errs.push(`${name}: ${e.message}`);
+
+		const respMap = {};
+		targets.forEach((t, i) => (respMap[t.row] = responses[i]));
+
+		const newRaw = [];
+		const newIds = [];
+		const errs = [];
+
+		for (let i = 0; i < rowCount; i++) {
+			const row = i + 4;
+			const origRaw = rawVals[i];
+			const origId = idVals[i];
+
+			if (respMap[row]) {
+				try {
+					const resp = respMap[row];
+					if (resp.getResponseCode() !== 200) {
+						throw new Error(`HTTP ${resp.getResponseCode()}`);
+					}
+					const j = JSON.parse(resp.getContentText());
+					const id = extractIdFromResponse(j);
+					if (!id) throw new Error('ID not found');
+
+					newRaw.push([rawPrefix + extractRawName(origRaw)]);
+					newIds.push([id]);
+				} catch (e) {
+					errs.push(`${extractRawName(origRaw)}: ${e.message}`);
+					newRaw.push([origRaw]);
+					newIds.push([origId]);
+				}
+			} else {
+				newRaw.push([origRaw]);
+				newIds.push([origId]);
 			}
-		});
+		}
+
+		sheet.getRange(4, rawNameCol, rowCount, 1).setValues(newRaw);
+		sheet.getRange(4, idCol, rowCount, 1).setValues(newIds);
 
 		if (errs.length) ui.alert(`ID 업데이트 오류:\n${errs.join('\n')}`);
 	}
@@ -351,7 +383,6 @@
 		counterRanges,
 		initialCursor,
 	}) {
-		log(`${serviceName} Tracking 시작`);
 		const ui = SpreadsheetApp.getUi();
 		const ss = SpreadsheetApp.getActiveSpreadsheet();
 		const sheets = {
@@ -418,9 +449,6 @@
 			});
 			cursors.clear();
 			const { responses, totalCalls } = fetchAllWithBackoff(requests);
-			log(
-				`${serviceName} API 호출: ${responses.length}개, 총 ${totalCalls}회`,
-			);
 			recordLog(`${serviceName} API`, totalCalls);
 			responses.forEach((resp, idx) => {
 				const { key, username } = infos[idx];
@@ -448,7 +476,7 @@
 				} catch (err) {
 					if (err.message.includes('HTTP 429')) {
 						failures.push(
-							`${username}: 다른 부서(사용자)가 사용 중입니다. 잠시 후 다시 시도해 주세요.}`,
+							`${username}: 다른 부서(사용자)가 사용 중입니다. 잠시 후 다시 시도해 주세요.`,
 						);
 					} else if (err.message.includes('HTTP 204')) {
 						failures.push(
