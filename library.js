@@ -632,14 +632,12 @@
 		const resultSheet = ss.getSheetByName('유튜브 결과');
 		const START_ROW = 4;
 
-		// 1) 채널명 목록(E4:E)
 		const raws = listSheet
 			.getRange(START_ROW, 5, listSheet.getLastRow() - START_ROW + 1, 1)
 			.getValues()
 			.flat()
 			.filter((r) => r);
 
-		// 2) 기간 & 키워드 로드
 		const startDate = new Date(mainSheet.getRange('C3').getValue());
 		const endDate = new Date(mainSheet.getRange('C4').getValue());
 		const keywords = ss
@@ -659,7 +657,6 @@
 			)
 			.clearContent();
 
-		// 4) 검색 + 메타 수집
 		const allMeta = [];
 		const allIds = [];
 
@@ -669,23 +666,30 @@
 			if (!channelId) return;
 
 			let cursor = '';
-			while (true) {
+			let stop = false;
+			while (!stop) {
 				const { url } = buildYouTubeSearchRequest(channelId, cursor);
 				const resp = UrlFetchApp.fetch(url, {
 					muteHttpExceptions: true,
 				});
 				const data = JSON.parse(resp.getContentText());
-				(data.items || []).forEach((item) => {
-					if (item.id.kind !== 'youtube#video') return;
+				const items = data.items || [];
+
+				for (const item of items) {
+					if (item.id.kind !== 'youtube#video') continue;
 
 					const sn = item.snippet;
 					const ts = new Date(sn.publishedAt);
-					Logger.log(
-						`Processing video: ${sn.title} (${item.id.videoId}) at ${ts}`,
-					);
 
-					// ← 여기서만 기간 체크
-					if (ts < startDate || ts > endDate) return;
+					if (ts < startDate) {
+						stop = true;
+						Logger.log(
+							`Stopping search for ${raw} - first video is before start date: ${ts}`,
+						);
+						break;
+					}
+
+					if (ts > endDate) continue;
 
 					allIds.push(item.id.videoId);
 					allMeta.push({
@@ -696,15 +700,13 @@
 						title: sn.title,
 						desc: sn.description,
 					});
-				});
+				}
 
-				// 다음 페이지 없으면 종료
-				if (!data.nextPageToken) break;
+				if (stop || !data.nextPageToken) break;
 				cursor = data.nextPageToken;
 			}
 		});
 
-		// 5) 메인 시트에 총 영상 수 기록 (C15)
 		mainSheet.getRange('C15').setValue(allMeta.length);
 
 		if (!allIds.length) {
@@ -713,7 +715,6 @@
 			return;
 		}
 
-		// 6) 통계＋태그 배치 조회 (50개씩)
 		const statsMap = {};
 		chunkArray(allIds, 50).forEach((batch) => {
 			const { url } = buildYouTubeStatsAndTagsRequest(batch);
@@ -725,7 +726,6 @@
 			);
 		});
 
-		// 7) 키워드 필터링 & 최종 배열 생성
 		const finalRows = allMeta
 			.filter((m) => {
 				const entry = statsMap[m.vid] || { tags: [] };
@@ -753,16 +753,16 @@
 				];
 			});
 
-		// 8) 메인 시트에 관련 영상 수 기록 (C16)
 		mainSheet.getRange('C16').setValue(finalRows.length);
 
-		// 9) 결과 시트에 쓰기 (2행부터)
 		if (finalRows.length) {
 			resultSheet
 				.getRange(2, 1, finalRows.length, finalRows[0].length)
 				.setValues(finalRows);
 		} else {
-			SpreadsheetApp.getUi().alert('키워드에 매칭되는 영상이 없습니다.');
+			SpreadsheetApp.getUi().alert(
+				'기간내 키워드에 매칭되는 영상이 없습니다.',
+			);
 		}
 	}
 
