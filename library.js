@@ -615,9 +615,6 @@
 		].join('');
 
 		const resp = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-		Logger.log('Request URL → ' + url);
-		Logger.log('Status Code → ' + resp.getResponseCode());
-		Logger.log('Response Text → ' + resp.getContentText());
 
 		if (resp.getResponseCode() !== 200) return null;
 		const items = JSON.parse(resp.getContentText()).items || [];
@@ -683,12 +680,8 @@
 
 					if (ts < startDate) {
 						stop = true;
-						Logger.log(
-							`Stopping search for ${raw} - first video is before start date: ${ts}`,
-						);
 						break;
 					}
-
 					if (ts > endDate) continue;
 
 					allIds.push(item.id.videoId);
