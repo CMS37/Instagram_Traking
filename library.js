@@ -1,15 +1,9 @@
-/*
-	Combined Tracking Library
-	Exposes only:
-		- updateTikTokIds()
-		- updateInstagramIds()
-		- runTikTokTracking()
-		- runInstagramTracking()
-*/
 (function (global) {
 	'use strict';
 
+	// ───────────────────────────────────────────────────────────────────────────
 	// Configuration
+	// ───────────────────────────────────────────────────────────────────────────
 	const Config = {
 		TK_HOST: PropertiesService.getScriptProperties().getProperty('TK_HOST'),
 		INS_HOST:
@@ -35,10 +29,18 @@
 		),
 	};
 
+	// ───────────────────────────────────────────────────────────────────────────
 	// Utilities
-	// const log = (message) => Logger.log(message);
+	// ───────────────────────────────────────────────────────────────────────────
+	const chunkArray = (arr, size) => {
+		const chunks = [];
+		for (let i = 0; i < arr.length; i += size) {
+			chunks.push(arr.slice(i, i + size));
+		}
+		return chunks;
+	};
 
-	function writeResults(rows, sheet) {
+	const writeResults = (rows, sheet) => {
 		const lastRow = sheet.getLastRow();
 		const lastCol = sheet.getLastColumn();
 		if (lastRow >= 2 && lastCol) {
@@ -47,28 +49,35 @@
 		if (rows.length) {
 			sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
 		}
-	}
+	};
 
-	function recordLog(apiName, count) {
-		const sourceSS = SpreadsheetApp.getActiveSpreadsheet();
-		const sheetName = sourceSS.getName();
+	const recordLog = (apiName, count) => {
+		const ss = SpreadsheetApp.getActiveSpreadsheet();
+		const name = ss.getName();
 		const logSS = SpreadsheetApp.openById(Config.LOG_SHEET);
-		let logSheet = logSS.getSheetByName(sheetName);
+		let logSheet = logSS.getSheetByName(name);
 		if (!logSheet) {
-			logSheet = logSS.insertSheet(sheetName);
+			logSheet = logSS.insertSheet(name);
 			logSheet
 				.getRange(1, 1, 1, 4)
 				.setValues([
 					['Timestamp', 'UserEmail', 'APIName', 'CallCount'],
 				]);
+
 			logSheet.setFrozenRows(1);
 		}
-		logSheet.insertRowAfter(1);
-		const userEmail = Session.getActiveUser().getEmail() || 'unknown';
 		logSheet
+			.insertRowAfter(1)
 			.getRange(2, 1, 1, 4)
-			.setValues([[new Date(), userEmail, apiName, count]]);
-	}
+			.setValues([
+				[
+					new Date(),
+					Session.getActiveUser().getEmail() || 'unknown',
+					apiName,
+					count,
+				],
+			]);
+	};
 
 	const fetchAllWithBackoff = (
 		requests,
@@ -78,63 +87,224 @@
 	) => {
 		const RETRY_CODES = [204, 429, 500, 502, 503, 504];
 		const results = [];
-
 		let totalCalls = 0;
 
 		for (let i = 0; i < requests.length; i += batchSize) {
 			let batch = requests.slice(i, i + batchSize);
 			let attempt = 0;
 			let lastResponses = [];
+
 			while (batch.length && attempt <= maxRetries) {
 				totalCalls += batch.length;
 				const responses = UrlFetchApp.fetchAll(batch);
 				lastResponses = responses;
-
 				const retry = [];
+
 				responses.forEach((resp, idx) => {
 					const code = resp.getResponseCode();
-					if (RETRY_CODES.includes(code)) {
-						retry.push(batch[idx]);
-					} else {
-						results.push(resp);
-					}
+					if (RETRY_CODES.includes(code)) retry.push(batch[idx]);
+					else results.push(resp);
 				});
 
-				if (!retry.length) {
-					batch = [];
-					break;
-				}
-
+				if (!retry.length) break;
 				batch = retry;
-				Utilities.sleep(delayMs * Math.pow(2, attempt));
+				Utilities.sleep(delayMs * 2 ** attempt);
 				attempt++;
 			}
+
 			if (batch.length && attempt > maxRetries) {
 				lastResponses.forEach((resp) => {
 					const err = new Error(
-						`최대 재시도 횟수 초과: HTTP ${resp.getResponseCode()}`,
+						`Max retries exceeded: HTTP ${resp.getResponseCode()}`,
 					);
 					err.response = resp;
 					results.push(err);
 				});
 			}
 		}
+
 		return { responses: results, totalCalls };
 	};
 
-	// Extract raw usernames
+	// ───────────────────────────────────────────────────────────────────────────
+	// Extractors
+	// ───────────────────────────────────────────────────────────────────────────
 	const extractInstagramUsername = (raw) => {
 		const s = (raw || '').toString().trim();
 		const m = s.match(/instagram\.com\/([A-Za-z0-9._]+)/i);
 		return m ? m[1] : s.replace(/^@+/, '');
 	};
+
 	const extractTikTokUsername = (raw) => {
 		const s = (raw || '').toString().trim();
 		const m = s.match(/tiktok\.com\/(?:@)?([A-Za-z0-9._]+)/i);
 		return m ? m[1] : s.replace(/^@+/, '');
 	};
 
-	// Generic ID updater
+	// ───────────────────────────────────────────────────────────────────────────
+	// Request Builders
+	// ───────────────────────────────────────────────────────────────────────────
+	const buildTikTokIdRequest = (username) => ({
+		url: `https://${Config.TK_HOST}/api/user/info?uniqueId=${encodeURIComponent(username)}`,
+		method: 'get',
+		headers: {
+			'x-rapidapi-host': Config.TK_HOST,
+			'x-rapidapi-key': Config.API_KEY,
+		},
+		muteHttpExceptions: true,
+	});
+
+	const buildTikTokPostsRequest = (secUid, cursor = '0') => ({
+		url: `https://${Config.TK_HOST}/api/user/posts?secUid=${encodeURIComponent(secUid)}&count=35&cursor=${cursor}`,
+		method: 'get',
+		headers: {
+			'x-rapidapi-host': Config.TK_HOST,
+			'x-rapidapi-key': Config.API_KEY,
+		},
+		muteHttpExceptions: true,
+	});
+
+	const buildInstagramIdRequest = (username) => ({
+		url: `https://${Config.INS_HOST}/id?username=${encodeURIComponent(username)}`,
+		method: 'get',
+		headers: {
+			'x-rapidapi-host': Config.INS_HOST,
+			'x-rapidapi-key': Config.API_KEY,
+		},
+		muteHttpExceptions: true,
+	});
+
+	const buildInstagramPostsRequest = (userId, endCursor = '') => ({
+		url: `https://${Config.INS_HOST}/user-feeds2?id=${encodeURIComponent(userId)}&count=12${endCursor ? `&end_cursor=${encodeURIComponent(endCursor)}` : ''}`,
+		method: 'get',
+		headers: {
+			'x-rapidapi-host': Config.INS_HOST,
+			'x-rapidapi-key': Config.API_KEY,
+		},
+		muteHttpExceptions: true,
+	});
+
+	const buildYouTubeSearchRequest = (channelId, pageToken = '') => {
+		const params = [
+			`key=${Config.YT_API_KEY}`,
+			`channelId=${encodeURIComponent(channelId)}`,
+			'part=snippet',
+			'order=date',
+			'maxResults=50',
+			pageToken && `pageToken=${encodeURIComponent(pageToken)}`,
+		]
+			.filter(Boolean)
+			.join('&');
+		return {
+			url: `https://www.googleapis.com/youtube/v3/search?${params}`,
+			method: 'get',
+			muteHttpExceptions: true,
+		};
+	};
+
+	const buildYouTubeStatsAndTagsRequest = (videoIds) => ({
+		url: `https://www.googleapis.com/youtube/v3/videos?key=${Config.YT_API_KEY}&id=${videoIds.join(',')}&part=snippet,statistics`,
+		method: 'get',
+		muteHttpExceptions: true,
+	});
+
+	// ───────────────────────────────────────────────────────────────────────────
+	// Parsers & Filters
+	// ───────────────────────────────────────────────────────────────────────────
+	const parseYouTubeStatsAndTags = (jsonText) => {
+		const data = JSON.parse(jsonText);
+		const map = {};
+		(data.items || []).forEach((item) => {
+			map[item.id] = {
+				stats: item.statistics || {},
+				tags: (item.snippet.tags || []).map((t) => t.toLowerCase()),
+			};
+		});
+		return map;
+	};
+
+	function filterTikTokPosts(items, username, startDate, endDate, keywords) {
+		const rows = [];
+		let newCount = 0,
+			relCount = 0;
+		let stopPaging = false;
+		for (const item of items) {
+			const ts = new Date(item.createTime * 1000);
+			if (ts <= startDate && !item.isPinnedItem) {
+				stopPaging = true;
+				break;
+			}
+			newCount++;
+			if (ts < startDate || ts > endDate) continue;
+			const desc = (item.desc || '').toLowerCase();
+			if (keywords.length && !keywords.some((k) => desc.includes(k)))
+				continue;
+			relCount++;
+			rows.push([
+				username,
+				ts,
+				`https://www.tiktok.com/@${username}/video/${item.id}`,
+				item.desc,
+				item.stats.playCount,
+				item.stats.diggCount,
+				item.stats.commentCount,
+				item.stats.collectCount,
+			]);
+		}
+		return { rows, newCount, relCount, stopPaging };
+	}
+
+	function filterInstagramPosts(
+		edges,
+		username,
+		startDate,
+		endDate,
+		keywords,
+	) {
+		const rows = [];
+		let newCount = 0,
+			relCount = 0;
+		let stopPaging = false;
+		for (const { node } of edges) {
+			const ts = new Date((node.taken_at_timestamp || 0) * 1000);
+			const pinned =
+				Array.isArray(node.pinned_for_users) &&
+				node.pinned_for_users.length;
+			if (!pinned && ts <= startDate) {
+				stopPaging = true;
+				break;
+			}
+			newCount++;
+			if (ts < startDate || ts > endDate) continue;
+			const caption = (
+				node.edge_media_to_caption?.edges?.[0]?.node?.text || ''
+			).toLowerCase();
+			if (keywords.length && !keywords.some((k) => caption.includes(k)))
+				continue;
+			relCount++;
+			const like = node.like_and_view_counts_disabled
+				? 'x'
+				: node.edge_media_preview_like?.count || 'x';
+			const comment = node.like_and_view_counts_disabled
+				? 'x'
+				: node.edge_media_to_comment?.count || 'x';
+			const view = node.is_video ? node.video_view_count || 'x' : 'x';
+			rows.push([
+				username,
+				ts,
+				`https://www.instagram.com/p/${node.shortcode}`,
+				caption,
+				view,
+				like,
+				comment,
+			]);
+		}
+		return { rows, newCount, relCount, stopPaging };
+	}
+
+	// ───────────────────────────────────────────────────────────────────────────
+	// ID Updaters
+	// ───────────────────────────────────────────────────────────────────────────
 	function updateUserIds({
 		serviceName,
 		sheetName,
@@ -217,101 +387,20 @@
 		if (errs.length) ui.alert(`ID 업데이트 오류:\n${errs.join('\n')}`);
 	}
 
-	// Build requests
-	function buildTikTokIdRequest(username) {
-		return {
-			url: `https://${Config.TK_HOST}/api/user/info?uniqueId=${encodeURIComponent(username)}`,
-			method: 'get',
-			headers: {
-				'x-rapidapi-host': Config.TK_HOST,
-				'x-rapidapi-key': Config.API_KEY,
-			},
-			muteHttpExceptions: true,
-		};
-	}
-
-	function buildTikTokPostsRequest(secUid, cursor = '0') {
-		return {
-			url: `https://${Config.TK_HOST}/api/user/posts?secUid=${encodeURIComponent(secUid)}&count=${35}&cursor=${cursor}`,
-			method: 'get',
-			headers: {
-				'x-rapidapi-host': Config.TK_HOST,
-				'x-rapidapi-key': Config.API_KEY,
-			},
-			muteHttpExceptions: true,
-		};
-	}
-
-	function buildInstagramPostsRequest(userId, endCursor = '') {
-		return {
-			url: `https://${Config.INS_HOST}/user-feeds2?id=${encodeURIComponent(userId)}&count=${12}${endCursor ? `&end_cursor=${encodeURIComponent(endCursor)}` : ''}`,
-			method: 'get',
-			headers: {
-				'x-rapidapi-host': Config.INS_HOST,
-				'x-rapidapi-key': Config.API_KEY,
-			},
-			muteHttpExceptions: true,
-		};
-	}
-
-	function buildInstagramIdRequest(username) {
-		return {
-			url: `https://${Config.INS_HOST}/id?username=${encodeURIComponent(username)}`,
-			method: 'get',
-			headers: {
-				'x-rapidapi-host': Config.INS_HOST,
-				'x-rapidapi-key': Config.API_KEY,
-			},
-			muteHttpExceptions: true,
-		};
-	}
-
-	const buildYouTubeSearchRequest = (channelId, pageToken = '') => {
-		const params = [
-			`key=${Config.YT_API_KEY}`,
-			`channelId=${encodeURIComponent(channelId)}`,
-			'part=snippet',
-			'order=date',
-			'maxResults=50',
-			pageToken && `pageToken=${encodeURIComponent(pageToken)}`,
-		]
-			.filter(Boolean)
-			.join('&');
-		return {
-			url: `https://www.googleapis.com/youtube/v3/search?${params}`,
-			method: 'get',
-			muteHttpExceptions: true,
-		};
-	};
-
-	const buildYouTubeStatsAndTagsRequest = (videoIds) => ({
-		url: [
-			'https://www.googleapis.com/youtube/v3/videos',
-			`?key=${Config.YT_API_KEY}`,
-			`&id=${videoIds.join(',')}`,
-			'&part=snippet,statistics',
-		].join(''),
-		method: 'get',
-		muteHttpExceptions: true,
-	});
-
-	// TikTok ID
-	function updateTikTokIds() {
-		return updateUserIds({
+	const updateTikTokIds = () =>
+		updateUserIds({
 			serviceName: 'TikTok',
 			sheetName: '인플루언서목록',
 			rawNameCol: 3,
 			idCol: 4,
 			requestBuilder: buildTikTokIdRequest,
 			extractRawName: extractTikTokUsername,
-			extractIdFromResponse: (json) => json?.userInfo?.user?.secUid,
+			extractIdFromResponse: (json) => json.userInfo.user.secUid,
 			rawPrefix: '@',
 		});
-	}
 
-	// Instagram ID
-	function updateInstagramIds() {
-		return updateUserIds({
+	const updateInstagramIds = () =>
+		updateUserIds({
 			serviceName: 'Instagram',
 			sheetName: '인플루언서목록',
 			rawNameCol: 1,
@@ -320,91 +409,10 @@
 			extractRawName: extractInstagramUsername,
 			extractIdFromResponse: (json) => json.user_id,
 		});
-	}
 
-	// Post filters
-	function filterTikTokPosts(items, username, startDate, endDate, keywords) {
-		const rows = [];
-		let newCount = 0,
-			relCount = 0;
-		let stopPaging = false;
-		for (const item of items) {
-			const ts = new Date(item.createTime * 1000);
-			if (ts <= startDate && !item.isPinnedItem) {
-				stopPaging = true;
-				break;
-			}
-			newCount++;
-			if (ts < startDate || ts > endDate) continue;
-			const descLower = (item.desc || '').toLowerCase();
-			if (keywords.length && !keywords.some((k) => descLower.includes(k)))
-				continue;
-			relCount++;
-			rows.push([
-				username,
-				ts,
-				`https://www.tiktok.com/@${username}/video/${item.id}`,
-				item.desc,
-				item.stats.playCount,
-				item.stats.diggCount,
-				item.stats.commentCount,
-				item.stats.collectCount,
-			]);
-		}
-		return { rows, newCount, relCount, stopPaging };
-	}
-
-	function filterInstagramPosts(
-		edges,
-		username,
-		startDate,
-		endDate,
-		keywords,
-	) {
-		const rows = [];
-		let newCount = 0,
-			relCount = 0;
-		let stopPaging = false;
-
-		for (const { node } of edges) {
-			const ts = new Date((node.taken_at_timestamp ?? 0) * 1000);
-			const isPinned =
-				Array.isArray(node.pinned_for_users) &&
-				node.pinned_for_users.length > 0;
-			if (!isPinned && ts <= startDate) {
-				stopPaging = true;
-				break;
-			}
-			newCount++;
-			if (ts < startDate || ts > endDate) continue;
-			const caption =
-				node.edge_media_to_caption?.edges?.[0]?.node?.text?.toLowerCase() ??
-				'';
-			if (!keywords.some((k) => caption.includes(k))) continue;
-			relCount++;
-			const likeCount = node.like_and_view_counts_disabled
-				? 'x'
-				: (node.edge_media_preview_like?.count ?? 'x');
-			const commentCount = node.like_and_view_counts_disabled
-				? 'x'
-				: (node.edge_media_to_comment?.count ?? 'x');
-			const viewCount = node.is_video
-				? (node.video_view_count ?? 'x')
-				: 'x';
-			rows.push([
-				username,
-				ts,
-				`https://www.instagram.com/p/${node.shortcode}`,
-				caption,
-				viewCount,
-				likeCount,
-				commentCount,
-			]);
-		}
-		return { rows, newCount, relCount, stopPaging };
-	}
-
-	// Core tracker
+	// ───────────────────────────────────────────────────────────────────────────
+	// Core Tracking Runner
+	// ───────────────────────────────────────────────────────────────────────────
 	function runTracking({
 		serviceName,
 		sheetNames,
@@ -469,6 +477,7 @@
 			totalRel = 0;
 		const rowsToWrite = [];
 		const failures = [];
+		let Calls = 0;
 		const cursors = new Map(
 			userRows.map(([u, id]) => [`${u}|${id}`, initialCursor]),
 		);
@@ -482,7 +491,7 @@
 			});
 			cursors.clear();
 			const { responses, totalCalls } = fetchAllWithBackoff(requests);
-			recordLog(`${serviceName} API`, totalCalls);
+			Calls += totalCalls;
 			responses.forEach((resp, idx) => {
 				const { key, username } = infos[idx];
 				if (resp instanceof Error) {
@@ -521,6 +530,7 @@
 				}
 			});
 		}
+		recordLog(`${serviceName} API`, Calls);
 		writeResults(rowsToWrite, sheets.result);
 		sheets.main.getRange(counterRanges.newCount).setValue(totalNew);
 		sheets.main.getRange(counterRanges.relCount).setValue(totalRel);
@@ -529,7 +539,6 @@
 		);
 	}
 
-	// TikTok tracking
 	function runTikTokTracking() {
 		return runTracking({
 			serviceName: 'TikTok',
@@ -554,7 +563,6 @@
 		});
 	}
 
-	// Instagram tracking
 	function runInstagramTracking() {
 		return runTracking({
 			serviceName: 'Instagram',
@@ -582,27 +590,6 @@
 		});
 	}
 
-	// YouTube stats and tags
-	const parseYouTubeStatsAndTags = (jsonText) => {
-		const data = JSON.parse(jsonText);
-		const map = {};
-		(data.items || []).forEach((item) => {
-			map[item.id] = {
-				stats: item.statistics || {},
-				tags: (item.snippet.tags || []).map((t) => t.toLowerCase()),
-			};
-		});
-		return map;
-	};
-
-	function chunkArray(arr, size) {
-		const chunks = [];
-		for (let i = 0; i < arr.length; i += size) {
-			chunks.push(arr.slice(i, i + size));
-		}
-		return chunks;
-	}
-
 	function getChannelIdBySearch(query) {
 		const clean = query.replace(/^@/, '').trim();
 		const url = [
@@ -621,7 +608,6 @@
 		return items[0]?.id?.channelId || null;
 	}
 
-	// YouTube tracking with stats
 	function runYouTubeTracking() {
 		const ss = SpreadsheetApp.getActive();
 		const listSheet = ss.getSheetByName('인플루언서목록');
@@ -656,8 +642,9 @@
 
 		const allMeta = [];
 		const allIds = [];
-
+		let totalCount = 0;
 		raws.forEach((raw) => {
+			totalCount++;
 			const channelName = raw.toString().trim();
 			const channelId = getChannelIdBySearch(channelName);
 			if (!channelId) return;
@@ -666,6 +653,7 @@
 			let stop = false;
 			while (!stop) {
 				const { url } = buildYouTubeSearchRequest(channelId, cursor);
+				totalCount++;
 				const resp = UrlFetchApp.fetch(url, {
 					muteHttpExceptions: true,
 				});
@@ -711,6 +699,7 @@
 		const statsMap = {};
 		chunkArray(allIds, 50).forEach((batch) => {
 			const { url } = buildYouTubeStatsAndTagsRequest(batch);
+			totalCount++;
 			const resp = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
 			if (resp.getResponseCode() !== 200) return;
 			Object.assign(
@@ -747,6 +736,7 @@
 			});
 
 		mainSheet.getRange('C16').setValue(finalRows.length);
+		recordLog('YouTube Tracking', totalCount);
 
 		if (finalRows.length) {
 			resultSheet
@@ -759,7 +749,9 @@
 		}
 	}
 
-	// Expose
+	// ───────────────────────────────────────────────────────────────────────────
+	// Exports
+	// ───────────────────────────────────────────────────────────────────────────
 	global.updateTikTokIds = updateTikTokIds;
 	global.updateInstagramIds = updateInstagramIds;
 	global.runTikTokTracking = runTikTokTracking;
