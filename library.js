@@ -15,6 +15,10 @@
 		INS_HOST:
 			PropertiesService.getScriptProperties().getProperty('INS_HOST'),
 		API_KEY: PropertiesService.getScriptProperties().getProperty('API_KEY'),
+		YT_API_KEY:
+			PropertiesService.getScriptProperties().getProperty(
+				'YOUTUBE_API_KEY',
+			),
 		LOG_SHEET:
 			PropertiesService.getScriptProperties().getProperty('LOG_SHEET'),
 		BATCH_SIZE: parseInt(
@@ -261,6 +265,35 @@
 			muteHttpExceptions: true,
 		};
 	}
+
+	const buildYouTubeSearchRequest = (channelId, pageToken = '') => {
+		const params = [
+			`key=${Config.YT_API_KEY}`,
+			`channelId=${encodeURIComponent(channelId)}`,
+			'part=snippet',
+			'order=date',
+			'maxResults=50',
+			pageToken && `pageToken=${encodeURIComponent(pageToken)}`,
+		]
+			.filter(Boolean)
+			.join('&');
+		return {
+			url: `https://www.googleapis.com/youtube/v3/search?${params}`,
+			method: 'get',
+			muteHttpExceptions: true,
+		};
+	};
+
+	const buildYouTubeStatsAndTagsRequest = (videoIds) => ({
+		url: [
+			'https://www.googleapis.com/youtube/v3/videos',
+			`?key=${Config.YT_API_KEY}`,
+			`&id=${videoIds.join(',')}`,
+			'&part=snippet,statistics',
+		].join(''),
+		method: 'get',
+		muteHttpExceptions: true,
+	});
 
 	// TikTok ID
 	function updateTikTokIds() {
@@ -549,9 +582,194 @@
 		});
 	}
 
+	// YouTube stats and tags
+	const parseYouTubeStatsAndTags = (jsonText) => {
+		const data = JSON.parse(jsonText);
+		const map = {};
+		(data.items || []).forEach((item) => {
+			map[item.id] = {
+				stats: item.statistics || {},
+				tags: (item.snippet.tags || []).map((t) => t.toLowerCase()),
+			};
+		});
+		return map;
+	};
+
+	function chunkArray(arr, size) {
+		const chunks = [];
+		for (let i = 0; i < arr.length; i += size) {
+			chunks.push(arr.slice(i, i + size));
+		}
+		return chunks;
+	}
+
+	function getChannelIdBySearch(query) {
+		const clean = query.replace(/^@/, '').trim();
+		const url = [
+			'https://www.googleapis.com/youtube/v3/search',
+			'?part=snippet',
+			'&type=channel',
+			`&q=${encodeURIComponent(clean)}`,
+			'&maxResults=1',
+			`&key=${Config.YT_API_KEY}`,
+		].join('');
+
+		const resp = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+		Logger.log('Request URL → ' + url);
+		Logger.log('Status Code → ' + resp.getResponseCode());
+		Logger.log('Response Text → ' + resp.getContentText());
+
+		if (resp.getResponseCode() !== 200) return null;
+		const items = JSON.parse(resp.getContentText()).items || [];
+		return items[0]?.id?.channelId || null;
+	}
+
+	// YouTube tracking with stats
+	function runYouTubeTracking() {
+		const ss = SpreadsheetApp.getActive();
+		const listSheet = ss.getSheetByName('인플루언서목록');
+		const mainSheet = ss.getSheetByName('메인');
+		const resultSheet = ss.getSheetByName('유튜브 결과');
+		const START_ROW = 4;
+
+		// 1) 채널명 목록(E4:E)
+		const raws = listSheet
+			.getRange(START_ROW, 5, listSheet.getLastRow() - START_ROW + 1, 1)
+			.getValues()
+			.flat()
+			.filter((r) => r);
+
+		// 2) 기간 & 키워드 로드
+		const startDate = new Date(mainSheet.getRange('C3').getValue());
+		const endDate = new Date(mainSheet.getRange('C4').getValue());
+		const keywords = ss
+			.getSheetByName('키워드목록')
+			.getRange(4, 1, ss.getSheetByName('키워드목록').getLastRow() - 3, 1)
+			.getValues()
+			.flat()
+			.filter((k) => k)
+			.map((k) => k.toString().toLowerCase());
+
+		resultSheet
+			.getRange(
+				2,
+				1,
+				resultSheet.getMaxRows() - 1,
+				resultSheet.getMaxColumns(),
+			)
+			.clearContent();
+
+		// 4) 검색 + 메타 수집
+		const allMeta = [];
+		const allIds = [];
+
+		raws.forEach((raw) => {
+			const channelName = raw.toString().trim();
+			const channelId = getChannelIdBySearch(channelName);
+			if (!channelId) return;
+
+			let cursor = '';
+			while (true) {
+				const { url } = buildYouTubeSearchRequest(channelId, cursor);
+				const resp = UrlFetchApp.fetch(url, {
+					muteHttpExceptions: true,
+				});
+				const data = JSON.parse(resp.getContentText());
+				(data.items || []).forEach((item) => {
+					if (item.id.kind !== 'youtube#video') return;
+
+					const sn = item.snippet;
+					const ts = new Date(sn.publishedAt);
+					Logger.log(
+						`Processing video: ${sn.title} (${item.id.videoId}) at ${ts}`,
+					);
+
+					// ← 여기서만 기간 체크
+					if (ts < startDate || ts > endDate) return;
+
+					allIds.push(item.id.videoId);
+					allMeta.push({
+						vid: item.id.videoId,
+						channelName,
+						ts,
+						url: `https://youtu.be/${item.id.videoId}`,
+						title: sn.title,
+						desc: sn.description,
+					});
+				});
+
+				// 다음 페이지 없으면 종료
+				if (!data.nextPageToken) break;
+				cursor = data.nextPageToken;
+			}
+		});
+
+		// 5) 메인 시트에 총 영상 수 기록 (C15)
+		mainSheet.getRange('C15').setValue(allMeta.length);
+
+		if (!allIds.length) {
+			mainSheet.getRange('C16').setValue(0);
+			SpreadsheetApp.getUi().alert('조회된 영상이 없습니다.');
+			return;
+		}
+
+		// 6) 통계＋태그 배치 조회 (50개씩)
+		const statsMap = {};
+		chunkArray(allIds, 50).forEach((batch) => {
+			const { url } = buildYouTubeStatsAndTagsRequest(batch);
+			const resp = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+			if (resp.getResponseCode() !== 200) return;
+			Object.assign(
+				statsMap,
+				parseYouTubeStatsAndTags(resp.getContentText()),
+			);
+		});
+
+		// 7) 키워드 필터링 & 최종 배열 생성
+		const finalRows = allMeta
+			.filter((m) => {
+				const entry = statsMap[m.vid] || { tags: [] };
+				const titleLow = m.title.toLowerCase();
+				const descLow = m.desc.toLowerCase();
+				const tags = entry.tags;
+				return keywords.some(
+					(k) =>
+						titleLow.includes(k) ||
+						descLow.includes(k) ||
+						tags.includes(k),
+				);
+			})
+			.map((m) => {
+				const st = (statsMap[m.vid] || {}).stats || {};
+				return [
+					m.channelName,
+					m.ts,
+					m.url,
+					m.title,
+					m.desc,
+					+st.viewCount || 0,
+					+st.likeCount || 0,
+					+st.commentCount || 0,
+				];
+			});
+
+		// 8) 메인 시트에 관련 영상 수 기록 (C16)
+		mainSheet.getRange('C16').setValue(finalRows.length);
+
+		// 9) 결과 시트에 쓰기 (2행부터)
+		if (finalRows.length) {
+			resultSheet
+				.getRange(2, 1, finalRows.length, finalRows[0].length)
+				.setValues(finalRows);
+		} else {
+			SpreadsheetApp.getUi().alert('키워드에 매칭되는 영상이 없습니다.');
+		}
+	}
+
 	// Expose
 	global.updateTikTokIds = updateTikTokIds;
 	global.updateInstagramIds = updateInstagramIds;
 	global.runTikTokTracking = runTikTokTracking;
 	global.runInstagramTracking = runInstagramTracking;
+	global.runYouTubeTracking = runYouTubeTracking;
 })(this);
