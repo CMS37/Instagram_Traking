@@ -164,18 +164,8 @@
 		muteHttpExceptions: true,
 	});
 
-	const buildInstagramIdRequest = (username) => ({
-		url: `https://${Config.INS_HOST}/id?username=${encodeURIComponent(username)}`,
-		method: 'get',
-		headers: {
-			'x-rapidapi-host': Config.INS_HOST,
-			'x-rapidapi-key': Config.API_KEY,
-		},
-		muteHttpExceptions: true,
-	});
-
-	const buildInstagramPostsRequest = (userId, endCursor = '') => ({
-		url: `https://${Config.INS_HOST}/user-feeds2?id=${encodeURIComponent(userId)}&count=12${endCursor ? `&end_cursor=${encodeURIComponent(endCursor)}` : ''}`,
+	const buildInstagramPostsRequest = (username, paginationToken = '') => ({
+		url: `https://${Config.INS_HOST}/v1/posts?username_or_id_or_url=${encodeURIComponent(username)}${paginationToken ? `&pagination_token=${encodeURIComponent(paginationToken)}` : ''}`,
 		method: 'get',
 		headers: {
 			'x-rapidapi-host': Config.INS_HOST,
@@ -255,7 +245,7 @@
 	}
 
 	function filterInstagramPosts(
-		edges,
+		items,
 		username,
 		startDate,
 		endDate,
@@ -265,40 +255,47 @@
 		let newCount = 0,
 			relCount = 0;
 		let stopPaging = false;
-		for (const { node } of edges) {
-			const ts = new Date((node.taken_at_timestamp || 0) * 1000);
-			const pinned =
-				Array.isArray(node.pinned_for_users) &&
-				node.pinned_for_users.length;
+
+		for (const item of items) {
+			const ts = new Date(item.taken_at_date);
+			console.log(
+				`Processing post: ${item.code}, timestamp: ${ts.toISOString()}`,
+			);
+
+			const pinned = Boolean(item.is_pinned);
 			if (!pinned && ts <= startDate) {
 				stopPaging = true;
 				break;
 			}
 			newCount++;
-			if (ts < startDate || ts > endDate) continue;
-			const caption = (
-				node.edge_media_to_caption?.edges?.[0]?.node?.text || ''
-			).toLowerCase();
-			if (keywords.length && !keywords.some((k) => caption.includes(k)))
-				continue;
+
+			if (!pinned && (ts < startDate || ts > endDate)) continue;
+
+			const text = (item.caption?.text || '').toLowerCase();
+			const tags = Array.isArray(item.caption?.hashtags)
+				? item.caption.hashtags.map((t) => t.toLowerCase())
+				: [];
+			const matched = keywords.some(
+				(k) =>
+					text.includes(k.toLowerCase()) ||
+					tags.includes(k.toLowerCase()),
+			);
+			if (keywords.length && !matched) continue;
+
 			relCount++;
-			const like = node.like_and_view_counts_disabled
-				? 'x'
-				: node.edge_media_preview_like?.count || 'x';
-			const comment = node.like_and_view_counts_disabled
-				? 'x'
-				: node.edge_media_to_comment?.count || 'x';
-			const view = node.is_video ? node.video_view_count || 'x' : 'x';
+
+			const link = `https://www.instagram.com/p/${item.code}`;
 			rows.push([
 				username,
 				ts,
-				`https://www.instagram.com/p/${node.shortcode}`,
-				caption,
-				view,
-				like,
-				comment,
+				link,
+				text,
+				item.ig_play_count ?? 'x',
+				item.like_count ?? 'x',
+				item.comment_count ?? 'x',
 			]);
 		}
+
 		return { rows, newCount, relCount, stopPaging };
 	}
 
@@ -399,16 +396,22 @@
 			rawPrefix: '@',
 		});
 
-	const updateInstagramIds = () =>
-		updateUserIds({
-			serviceName: 'Instagram',
-			sheetName: '인플루언서목록',
-			rawNameCol: 1,
-			idCol: 2,
-			requestBuilder: buildInstagramIdRequest,
-			extractRawName: extractInstagramUsername,
-			extractIdFromResponse: (json) => json.user_id,
-		});
+	function normalizeInstagramUsernames() {
+		const ss = SpreadsheetApp.getActiveSpreadsheet();
+		const sheet = ss.getSheetByName('인플루언서목록');
+		if (!sheet)
+			throw new Error('Sheet "인플루언서목록"을 찾을 수 없습니다.');
+
+		const lastRow = sheet.getLastRow();
+		if (lastRow < 4) return; // 데이터 없음
+
+		const raws = sheet
+			.getRange(4, 1, lastRow - 3, 1)
+			.getValues()
+			.flat();
+		const normalized = raws.map((raw) => [extractInstagramUsername(raw)]);
+		sheet.getRange(4, 1, normalized.length, 1).setValues(normalized);
+	}
 
 	// ───────────────────────────────────────────────────────────────────────────
 	// Core Tracking Runner
@@ -451,18 +454,21 @@
 			.filter(Boolean)
 			.map((k) => `${k}`.toLowerCase());
 
+		const numCols = listConfig.idCol - listConfig.rawNameCol + 1;
 		let userRows = sheets.list
 			.getRange(
 				listConfig.startRow,
 				listConfig.rawNameCol,
 				sheets.list.getLastRow() - listConfig.startRow + 1,
-				2,
+				numCols,
 			)
 			.getValues()
-			.map(([raw, id]) => [
-				listConfig.extractName(raw),
-				id?.toString().trim() || '',
-			])
+			.map((row) => {
+				const raw = row[0];
+				const idCell = row[listConfig.idCol - listConfig.rawNameCol];
+				const id = idCell != null ? idCell.toString().trim() : raw;
+				return [listConfig.extractName(raw), id];
+			})
 			.filter(([n, i]) => n && i);
 
 		const seen = new Set();
@@ -481,6 +487,10 @@
 		const cursors = new Map(
 			userRows.map(([u, id]) => [`${u}|${id}`, initialCursor]),
 		);
+		console.log(
+			`Starting ${serviceName} tracking from ${startDate.toISOString()} to ${endDate.toISOString()}`,
+		);
+		console.log(`Found ${cursors.size} unique users to track.`);
 		while (cursors.size) {
 			const requests = [];
 			const infos = [];
@@ -490,6 +500,9 @@
 				infos.push({ key, username });
 			});
 			cursors.clear();
+			console.log(
+				`Processing ${requests.length} requests for ${serviceName}...`,
+			);
 			const { responses, totalCalls } = fetchAllWithBackoff(requests);
 			Calls += totalCalls;
 			responses.forEach((resp, idx) => {
@@ -551,6 +564,7 @@
 			listConfig: {
 				startRow: 4,
 				rawNameCol: 3,
+				idCol: 4,
 				extractName: extractTikTokUsername,
 			},
 			buildRequest: buildTikTokPostsRequest,
@@ -564,6 +578,7 @@
 	}
 
 	function runInstagramTracking() {
+		console.log('Running Instagram tracking...');
 		return runTracking({
 			serviceName: 'Instagram',
 			sheetNames: {
@@ -575,15 +590,15 @@
 			listConfig: {
 				startRow: 4,
 				rawNameCol: 1,
-				extractName: extractInstagramUsername,
+				idCol: 1,
+				extractName: (raw) => raw.toString().trim(),
 			},
 			buildRequest: buildInstagramPostsRequest,
 			getItems: (json) =>
-				json.data.user.edge_owner_to_timeline_media.edges,
-			getNextCursor: (json, edges) =>
-				edges.page_info?.has_next_page
-					? edges.page_info.end_cursor
-					: null,
+				json.data && Array.isArray(json.data.items)
+					? json.data.items
+					: [],
+			getNextCursor: (json) => json.pagination_token || null,
 			filterFn: filterInstagramPosts,
 			counterRanges: { newCount: 'C7', relCount: 'C8' },
 			initialCursor: '',
@@ -753,7 +768,7 @@
 	// Exports
 	// ───────────────────────────────────────────────────────────────────────────
 	global.updateTikTokIds = updateTikTokIds;
-	global.updateInstagramIds = updateInstagramIds;
+	global.normalizeInstagramUsernames = normalizeInstagramUsernames;
 	global.runTikTokTracking = runTikTokTracking;
 	global.runInstagramTracking = runInstagramTracking;
 	global.runYouTubeTracking = runYouTubeTracking;
