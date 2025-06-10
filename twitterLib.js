@@ -192,10 +192,11 @@
 		let stopPaging = false;
 
 		for (const item of items) {
-			const legacy = item.legacy || {};
+			const tweet = item.tweet || item;
+			const legacy = tweet.legacy || {};
 			const createdAt = legacy.created_at;
+			console.log(`Processing tweet by ${username} at ${createdAt}`);
 			if (!createdAt) continue;
-
 			const ts = new Date(createdAt);
 			if (ts <= startDate) {
 				stopPaging = true;
@@ -235,6 +236,7 @@
 				quotes,
 				bookmarks,
 			]);
+			console.log(`Found tweet by ${username} on ${ts.toISOString()}`);
 		}
 
 		return { rows, newCount, relCount, stopPaging };

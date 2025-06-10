@@ -388,8 +388,8 @@
 		updateUserIds({
 			serviceName: 'TikTok',
 			sheetName: '인플루언서목록',
-			rawNameCol: 2,
-			idCol: 3,
+			rawNameCol: 3,
+			idCol: 4,
 			requestBuilder: buildTikTokIdRequest,
 			extractRawName: extractTikTokUsername,
 			extractIdFromResponse: (json) => json.userInfo.user.secUid,
@@ -563,8 +563,8 @@
 			},
 			listConfig: {
 				startRow: 4,
-				rawNameCol: 2,
-				idCol: 3,
+				rawNameCol: 3,
+				idCol: 4,
 				extractName: extractTikTokUsername,
 			},
 			buildRequest: buildTikTokPostsRequest,
@@ -631,7 +631,7 @@
 		const START_ROW = 4;
 
 		const raws = listSheet
-			.getRange(START_ROW, 4, listSheet.getLastRow() - START_ROW + 1, 1)
+			.getRange(START_ROW, 5, listSheet.getLastRow() - START_ROW + 1, 1)
 			.getValues()
 			.flat()
 			.filter((r) => r);
