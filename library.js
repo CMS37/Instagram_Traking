@@ -396,7 +396,7 @@
 			rawPrefix: '@',
 		});
 
-	function normalizeInstagramUsernames() {
+	function updateInstagramIds() {
 		const ss = SpreadsheetApp.getActiveSpreadsheet();
 		const sheet = ss.getSheetByName('인플루언서목록');
 		if (!sheet)
@@ -768,7 +768,7 @@
 	// Exports
 	// ───────────────────────────────────────────────────────────────────────────
 	global.updateTikTokIds = updateTikTokIds;
-	global.normalizeInstagramUsernames = normalizeInstagramUsernames;
+	global.updateInstagramIds = updateInstagramIds;
 	global.runTikTokTracking = runTikTokTracking;
 	global.runInstagramTracking = runInstagramTracking;
 	global.runYouTubeTracking = runYouTubeTracking;
