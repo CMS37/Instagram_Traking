@@ -79,6 +79,29 @@
 			]);
 	};
 
+	// function logDebugToSheet(debugArray) {
+	// 	const ss = SpreadsheetApp.getActiveSpreadsheet();
+	// 	let logSheet = ss.getSheetByName('DebugLog');
+	// 	if (!logSheet) {
+	// 		logSheet = ss.insertSheet('DebugLog');
+	// 		logSheet.appendRow(['idx', 'url', 'status', 'body']);
+	// 	}
+
+	// 	const rows = debugArray.map((item) => [
+	// 		item.idx,
+	// 		item.url,
+	// 		item.status,
+	// 		typeof item.body === 'object'
+	// 			? JSON.stringify(item.body)
+	// 			: item.body,
+	// 	]);
+
+	// 	// 한 번에 쓰기
+	// 	logSheet
+	// 		.getRange(logSheet.getLastRow() + 1, 1, rows.length, 4)
+	// 		.setValues(rows);
+	// }
+
 	const fetchAllWithBackoff = (
 		requests,
 		batchSize = Config.BATCH_SIZE,
@@ -99,6 +122,28 @@
 				const responses = UrlFetchApp.fetchAll(batch);
 				lastResponses = responses;
 				const retry = [];
+
+				// const debugArray = responses.map((resp, idx) => {
+				// 	let bodyText;
+				// 	try {
+				// 		bodyText = resp.getContentText();
+				// 		// JSON 형태면 파싱해서 객체로, 아니면 원본 문자열로
+				// 		try {
+				// 			bodyText = JSON.parse(bodyText);
+				// 		} catch (e) {
+				// 			/* 그냥 문자열 유지 */
+				// 		}
+				// 	} catch (e) {
+				// 		bodyText = null;
+				// 	}
+				// 	return {
+				// 		idx,
+				// 		url: batch[idx].url,
+				// 		status: resp.getResponseCode(),
+				// 		body: bodyText,
+				// 	};
+				// });
+				// logDebugToSheet(debugArray);
 
 				responses.forEach((resp, idx) => {
 					const code = resp.getResponseCode();
@@ -144,18 +189,8 @@
 	// ───────────────────────────────────────────────────────────────────────────
 	// Request Builders
 	// ───────────────────────────────────────────────────────────────────────────
-	const buildTikTokIdRequest = (username) => ({
-		url: `https://${Config.TK_HOST}/api/user/info?uniqueId=${encodeURIComponent(username)}`,
-		method: 'get',
-		headers: {
-			'x-rapidapi-host': Config.TK_HOST,
-			'x-rapidapi-key': Config.API_KEY,
-		},
-		muteHttpExceptions: true,
-	});
-
-	const buildTikTokPostsRequest = (secUid, cursor = '0') => ({
-		url: `https://${Config.TK_HOST}/api/user/posts?secUid=${encodeURIComponent(secUid)}&count=35&cursor=${cursor}`,
+	const buildTikTokPostsRequest = (id, cursor = '') => ({
+		url: `https://${Config.TK_HOST}/user/posts?unique_id=${encodeURIComponent(id)}&count=10&cursor=${cursor}`,
 		method: 'get',
 		headers: {
 			'x-rapidapi-host': Config.TK_HOST,
@@ -201,45 +236,83 @@
 	// ───────────────────────────────────────────────────────────────────────────
 	// Parsers & Filters
 	// ───────────────────────────────────────────────────────────────────────────
-	const parseYouTubeStatsAndTags = (jsonText) => {
-		const data = JSON.parse(jsonText);
-		const map = {};
-		(data.items || []).forEach((item) => {
+	function parseYouTubeStatsAndTags(responseText) {
+		const data = JSON.parse(responseText);
+		return data.items.reduce((map, item) => {
 			map[item.id] = {
 				stats: item.statistics || {},
-				tags: (item.snippet.tags || []).map((t) => t.toLowerCase()),
+				tags: item.snippet?.tags || [],
+				description: item.snippet?.description || '',
 			};
-		});
-		return map;
-	};
+			return map;
+		}, {});
+	}
 
+	function logDebugToSheet(debugArray) {
+		const ss = SpreadsheetApp.getActiveSpreadsheet();
+		let logSheet = ss.getSheetByName('DebugLog');
+		if (!logSheet) {
+			logSheet = ss.insertSheet('DebugLog');
+			logSheet.appendRow(['idx', 'url', 'status', 'body']);
+		}
+
+		const rows = debugArray.map((item) => [
+			item.idx,
+			item.url,
+			item.status,
+			typeof item.body === 'object'
+				? JSON.stringify(item.body)
+				: item.body,
+		]);
+
+		// 한 번에 쓰기
+		logSheet
+			.getRange(logSheet.getLastRow() + 1, 1, rows.length, 4)
+			.setValues(rows);
+	}
 	function filterTikTokPosts(items, username, startDate, endDate, keywords) {
 		const rows = [];
 		let newCount = 0,
 			relCount = 0;
 		let stopPaging = false;
+		console.log(
+			`Filtering TikTok posts for user: ${username}, startDate: ${startDate.toISOString()}, endDate: ${endDate.toISOString()}`,
+		);
 		for (const item of items) {
-			const ts = new Date(item.createTime * 1000);
-			if (ts <= startDate && !item.isPinnedItem) {
+			const ts = new Date(item.create_time * 1000);
+			console.log(
+				`Processing post: ${item.video_id}, timestamp: ${ts.toISOString()}`,
+			);
+
+			if (ts <= startDate) {
 				stopPaging = true;
 				break;
 			}
+
 			newCount++;
 			if (ts < startDate || ts > endDate) continue;
-			const desc = (item.desc || '').toLowerCase();
-			if (keywords.length && !keywords.some((k) => desc.includes(k)))
+
+			const title = (item.title || '').toLowerCase();
+			if (
+				keywords.length &&
+				!keywords.some((k) => title.includes(k.toLowerCase()))
+			) {
 				continue;
+			}
 			relCount++;
 			rows.push([
 				username,
 				ts,
-				`https://www.tiktok.com/@${username}/video/${item.id}`,
-				item.desc,
-				item.stats.playCount,
-				item.stats.diggCount,
-				item.stats.commentCount,
-				item.stats.collectCount,
+				`https://www.tiktok.com/@${username}/video/${item.video_id}`,
+				item.title,
+				item.play_count,
+				item.digg_count,
+				item.comment_count,
+				item.collect_count,
 			]);
+			console.log(
+				`Matched post: ${item.video_id}, title: ${item.title}, views: ${item.play_count} likes: ${item.digg_count}, comments: ${item.comment_count}`,
+			);
 		}
 		return { rows, newCount, relCount, stopPaging };
 	}
@@ -302,99 +375,29 @@
 	// ───────────────────────────────────────────────────────────────────────────
 	// ID Updaters
 	// ───────────────────────────────────────────────────────────────────────────
-	function updateUserIds({
-		serviceName,
-		sheetName,
-		rawNameCol,
-		idCol,
-		requestBuilder,
-		extractRawName,
-		extractIdFromResponse,
-		rawPrefix = '',
-	}) {
+	function updateTikTokIds() {
 		const ss = SpreadsheetApp.getActiveSpreadsheet();
-		const sheet = ss.getSheetByName(sheetName);
-		const ui = SpreadsheetApp.getUi();
-		if (!sheet) throw new Error(`Sheet "${sheetName}" not found.`);
+		const sheet = ss.getSheetByName('인플루언서목록');
+		if (!sheet)
+			throw new Error('Sheet "인플루언서목록"을 찾을 수 없습니다.');
 
-		const lastRow = sheet.getLastRow();
-		if (lastRow < 4) return ui.alert('✅ 업데이트할 유저가 없습니다');
-
-		const rowCount = lastRow - 3;
-
-		const rawVals = sheet
-			.getRange(4, rawNameCol, rowCount, 1)
+		const raws = sheet
+			.getRange('B4:B')
 			.getValues()
-			.flat();
-		const idVals = sheet.getRange(4, idCol, rowCount, 1).getValues().flat();
+			.map((row) => row[0])
+			.filter((row) => row);
 
-		const targets = rawVals
-			.map((raw, idx) => {
-				const name = extractRawName(raw);
-				const existing = idVals[idx].toString().trim();
-				return { row: idx + 4, name, needs: !!name && !existing };
-			})
-			.filter((t) => t.needs);
-
-		if (!targets.length) return ui.alert('✅ 업데이트할 유저가 없습니다');
-
-		const { responses, totalCalls } = fetchAllWithBackoff(
-			targets.map((t) => requestBuilder(t.name)),
-		);
-		recordLog(`${serviceName} ID update`, totalCalls);
-
-		const respMap = {};
-		targets.forEach((t, i) => (respMap[t.row] = responses[i]));
-
-		const newRaw = [];
-		const newIds = [];
-		const errs = [];
-
-		for (let i = 0; i < rowCount; i++) {
-			const row = i + 4;
-			const origRaw = rawVals[i];
-			const origId = idVals[i];
-
-			if (respMap[row]) {
-				try {
-					const resp = respMap[row];
-					if (resp.getResponseCode() !== 200) {
-						throw new Error(`HTTP ${resp.getResponseCode()}`);
-					}
-					const j = JSON.parse(resp.getContentText());
-					const id = extractIdFromResponse(j);
-					if (!id) throw new Error('ID not found');
-
-					newRaw.push([rawPrefix + extractRawName(origRaw)]);
-					newIds.push([id]);
-				} catch (e) {
-					errs.push(`${extractRawName(origRaw)}: ${e.message}`);
-					newRaw.push([origRaw]);
-					newIds.push([origId]);
-				}
-			} else {
-				newRaw.push([origRaw]);
-				newIds.push([origId]);
-			}
+		if (raws.length === 0) {
+			SpreadsheetApp.getUi().alert(
+				'틱톡 ID를 업데이트할 데이터가 없습니다.',
+			);
+			return;
 		}
 
-		sheet.getRange(4, rawNameCol, rowCount, 1).setValues(newRaw);
-		sheet.getRange(4, idCol, rowCount, 1).setValues(newIds);
+		const normalized = raws.map((raw) => [extractTikTokUsername(raw)]);
 
-		if (errs.length) ui.alert(`ID 업데이트 오류:\n${errs.join('\n')}`);
+		sheet.getRange(4, 2, normalized.length, 1).setValues(normalized);
 	}
-
-	const updateTikTokIds = () =>
-		updateUserIds({
-			serviceName: 'TikTok',
-			sheetName: '인플루언서목록',
-			rawNameCol: 3,
-			idCol: 4,
-			requestBuilder: buildTikTokIdRequest,
-			extractRawName: extractTikTokUsername,
-			extractIdFromResponse: (json) => json.userInfo.user.secUid,
-			rawPrefix: '@',
-		});
 
 	function updateInstagramIds() {
 		const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -403,7 +406,7 @@
 			throw new Error('Sheet "인플루언서목록"을 찾을 수 없습니다.');
 
 		const lastRow = sheet.getLastRow();
-		if (lastRow < 4) return; // 데이터 없음
+		if (lastRow < 4) return;
 
 		const raws = sheet
 			.getRange(4, 1, lastRow - 3, 1)
@@ -563,14 +566,15 @@
 			},
 			listConfig: {
 				startRow: 4,
-				rawNameCol: 3,
-				idCol: 4,
-				extractName: extractTikTokUsername,
+				rawNameCol: 2,
+				idCol: 2,
+				extractName: (raw) => raw.toString().trim(),
 			},
 			buildRequest: buildTikTokPostsRequest,
-			getItems: (json) => json.data.itemList,
-			getNextCursor: (json, items) =>
-				json.data.cursor !== '-1' ? json.data.cursor : null,
+			getItems: (json) =>
+				Array.isArray(json.data?.videos) ? json.data.videos : [],
+			getNextCursor: (json /*, items*/) =>
+				json.data?.hasMore ? json.data.cursor : null,
 			filterFn: filterTikTokPosts,
 			counterRanges: { newCount: 'C11', relCount: 'C12' },
 			initialCursor: '0',
@@ -578,7 +582,6 @@
 	}
 
 	function runInstagramTracking() {
-		console.log('Running Instagram tracking...');
 		return runTracking({
 			serviceName: 'Instagram',
 			sheetNames: {
@@ -605,46 +608,79 @@
 		});
 	}
 
-	function getChannelIdBySearch(query) {
-		const clean = query.replace(/^@/, '').trim();
+	function getChannelIdBySearch(rawInput) {
+		const input = rawInput.toString().trim();
+		const handle = input.startsWith('@') ? input : '@' + input;
+
 		const url = [
-			'https://www.googleapis.com/youtube/v3/search',
-			'?part=snippet',
-			'&type=channel',
-			`&q=${encodeURIComponent(clean)}`,
-			'&maxResults=1',
-			`&key=${Config.YT_API_KEY}`,
-		].join('');
+			'https://www.googleapis.com/youtube/v3/search?',
+			'part=snippet',
+			'type=channel',
+			'maxResults=1',
+			`q=${encodeURIComponent(handle)}`,
+			`key=${Config.YT_API_KEY}`,
+		].join('&');
 
 		const resp = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-
 		if (resp.getResponseCode() !== 200) return null;
+
 		const items = JSON.parse(resp.getContentText()).items || [];
-		return items[0]?.id?.channelId || null;
+		return items[0]?.id.channelId || null;
 	}
 
 	function runYouTubeTracking() {
 		const ss = SpreadsheetApp.getActive();
 		const listSheet = ss.getSheetByName('인플루언서목록');
+		const keywordSheet = ss.getSheetByName('키워드목록');
 		const mainSheet = ss.getSheetByName('메인');
 		const resultSheet = ss.getSheetByName('유튜브 결과');
-		const START_ROW = 4;
 
-		const raws = listSheet
-			.getRange(START_ROW, 5, listSheet.getLastRow() - START_ROW + 1, 1)
-			.getValues()
-			.flat()
-			.filter((r) => r);
+		const START_ROW_LIST = 4;
+		const COL_LIST = 3; // C열
+		const START_ROW_KEYWORDS = 2;
+		const COL_KEYWORDS = 1; // A열
 
+		function getColumnData(sheet, col, startRow) {
+			const all = sheet
+				.getRange(1, col, sheet.getMaxRows(), 1)
+				.getValues()
+				.flat()
+				.map((v) => v.toString().trim());
+			let lastRow = 0;
+			all.forEach((val, idx) => {
+				if (val !== '') lastRow = idx + 1; // 0-based → 1-based
+			});
+			if (lastRow < startRow) return [];
+			const numRows = lastRow - startRow + 1;
+			return sheet
+				.getRange(startRow, col, numRows, 1)
+				.getValues()
+				.flat()
+				.filter((v) => v !== '');
+		}
+
+		const influencers = getColumnData(listSheet, COL_LIST, START_ROW_LIST);
+		if (influencers.length === 0) {
+			SpreadsheetApp.getUi().alert(
+				'C열 4행 이하에 인플루언서 목록이 없습니다.',
+			);
+			return;
+		}
+
+		const keywords = getColumnData(
+			keywordSheet,
+			COL_KEYWORDS,
+			START_ROW_KEYWORDS,
+		);
+		if (keywords.length === 0) {
+			SpreadsheetApp.getUi().alert(
+				'A열 2행 이하에 읽을 키워드가 없습니다.',
+			);
+			return;
+		}
+		const lowerKeywords = keywords.map((k) => k.toLowerCase());
 		const startDate = new Date(mainSheet.getRange('C3').getValue());
 		const endDate = new Date(mainSheet.getRange('C4').getValue());
-		const keywords = ss
-			.getSheetByName('키워드목록')
-			.getRange(4, 1, ss.getSheetByName('키워드목록').getLastRow() - 3, 1)
-			.getValues()
-			.flat()
-			.filter((k) => k)
-			.map((k) => k.toString().toLowerCase());
 
 		resultSheet
 			.getRange(
@@ -658,9 +694,10 @@
 		const allMeta = [];
 		const allIds = [];
 		let totalCount = 0;
-		raws.forEach((raw) => {
+
+		// ← 여기만 raws → influencers 로 바뀜
+		influencers.forEach((channelName) => {
 			totalCount++;
-			const channelName = raw.toString().trim();
 			const channelId = getChannelIdBySearch(channelName);
 			if (!channelId) return;
 
@@ -725,25 +762,26 @@
 
 		const finalRows = allMeta
 			.filter((m) => {
-				const entry = statsMap[m.vid] || { tags: [] };
+				const entry = statsMap[m.vid] || { tags: [], description: '' };
 				const titleLow = m.title.toLowerCase();
-				const descLow = m.desc.toLowerCase();
-				const tags = entry.tags;
-				return keywords.some(
+				const descLow = entry.description.toLowerCase();
+				const tagsLow = entry.tags.map((t) => t.toLowerCase());
+				return lowerKeywords.some(
 					(k) =>
 						titleLow.includes(k) ||
 						descLow.includes(k) ||
-						tags.includes(k),
+						tagsLow.includes(k),
 				);
 			})
 			.map((m) => {
-				const st = (statsMap[m.vid] || {}).stats || {};
+				const entry = statsMap[m.vid] || {};
+				const st = entry.stats || {};
 				return [
 					m.channelName,
 					m.ts,
 					m.url,
 					m.title,
-					m.desc,
+					entry.description,
 					+st.viewCount || 0,
 					+st.likeCount || 0,
 					+st.commentCount || 0,
@@ -759,7 +797,7 @@
 				.setValues(finalRows);
 		} else {
 			SpreadsheetApp.getUi().alert(
-				'기간내 키워드에 매칭되는 영상이 없습니다.',
+				`전체 ${allMeta.length}개의 영상중 \n 기간내 키워드에 매칭되는 영상이 없습니다.`,
 			);
 		}
 	}
